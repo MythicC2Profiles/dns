@@ -7,7 +7,6 @@ class DNS(C2Profile):
     author = "@thiagomayllart"
     is_p2p = False
     is_server_routed = False
-    mythic_encrypts = True
     parameters = [
         C2ProfileParameter(
             name="callback_domains",
