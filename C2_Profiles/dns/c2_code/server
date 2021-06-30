@@ -465,7 +465,7 @@ def agent_message(msg, **kwargs):
     try:
 
 
-        response = requests.post(config['mythic_address'], data=msg, headers={"content-type": "text/plain"},
+        response = requests.post(config['mythic_address'], data=msg, headers={"Mythic": "dns","content-type": "text/plain"},
                                  verify=False)
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
