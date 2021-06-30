@@ -1,9 +1,9 @@
-from C2ProfileBase import *
+from mythic_c2_container.C2ProfileBase import *
 
 
 class DNS(C2Profile):
     name = "DNS"
-    description = "DNS Server."
+    description = "Uses DNS TXT Queries to establish communication with the DNS Server."
     author = "@tmayllart"
     is_p2p = False
     is_server_routed = False
