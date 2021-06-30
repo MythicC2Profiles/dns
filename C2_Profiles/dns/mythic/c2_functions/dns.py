@@ -15,13 +15,6 @@ class DNS(C2Profile):
             required=True,
         ),
         C2ProfileParameter(
-            name="dns_server",
-            description="DNS Server",
-            default_value="8.8.8.8",
-            parameter_type=ParameterType.String,
-            required=True,
-        ),
-        C2ProfileParameter(
             name="killdate",
             description="Kill Date",
             parameter_type=ParameterType.Date,
