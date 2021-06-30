@@ -312,7 +312,7 @@ class Resolver:
             mythic_msg = agent_message(full_msg)
             resp_msg = mythic_msg['result']
             dec_msg = mythic_msg['message']
-            if dec_msg == self.config['worker'].agents[channel].cached_message_server:
+            if dec_msg == self.config['worker'].agents[channel].cached_message_server and False:
                 resp_msg = self.config['worker'].agents[channel].cache_code
                 self.setup_resp_queue_cache(resp_msg, channel)
             else:
