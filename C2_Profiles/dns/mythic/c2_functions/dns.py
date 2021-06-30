@@ -18,6 +18,7 @@ class DNS(C2Profile):
             name="dns_server",
             description="DNS Server",
             default_value="8.8.8.8",
+            parameter_type=ParameterType.String,
             required=True,
         ),
         C2ProfileParameter(
