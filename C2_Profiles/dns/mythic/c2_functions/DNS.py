@@ -4,7 +4,7 @@ from mythic_c2_container.C2ProfileBase import *
 class DNS(C2Profile):
     name = "DNS"
     description = "Uses DNS TXT Queries to establish communication with the DNS Server."
-    author = "@tmayllart"
+    author = "@thiagomayllart"
     is_p2p = False
     is_server_routed = False
     mythic_encrypts = True
