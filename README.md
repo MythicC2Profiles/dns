@@ -1,4 +1,4 @@
-# http
+# DNS
 
 This is a Mythic C2 Profile called dns. It implements a DNS Server that listens for TXT Queries from the agent. This profiles includes:
 
