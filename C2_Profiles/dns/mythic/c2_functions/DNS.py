@@ -48,9 +48,12 @@ class DNS(C2Profile):
         ),
         C2ProfileParameter(
             name="AESPSK",
-            description="Base64 of a 32B AES Key",
-            default_value="",
+            description="Crypto type",
+            default_value="aes256_hmac",
+            parameter_type=ParameterType.ChooseOne,
+            choices=["aes256_hmac", "none"],
             required=False,
+            crypto_type=True
         ),
         C2ProfileParameter(
             name="msginit",
