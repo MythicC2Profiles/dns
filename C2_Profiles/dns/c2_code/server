@@ -354,17 +354,17 @@ class Resolver:
         return msgtype
 
     def get_fields(self, qname, msgtype, domain):
-        fields = {}
-        sections_prev = qname.split(domain)
-        sections = sections_prev[0].split(".")
-        
-        if len(sections) > 3:
+        try:
+            fields = {}
+            sections_prev = qname.split(domain)
+            sections = sections_prev[0].split(".")
+    
             fields['prefix'] = sections[0]
             fields['tsid'] = sections[1]
             fields['data'] = sections[2]
             fields['hmac'] = sections[3]
             return fields
-        else:
+        except:
             return None
 
     def increment_seq(self, seq):
@@ -374,12 +374,14 @@ class Resolver:
         return seq
 
     def hmac_check(self, fields, msgtype, key):
+        try:
+            hmac_ch = hmac.new(key.encode(), (fields['tsid'] + fields['data']).encode('utf-8'), hashlib.md5).hexdigest()
 
-        hmac_ch = hmac.new(key.encode(), (fields['tsid'] + fields['data']).encode('utf-8'), hashlib.md5).hexdigest()
-
-        if hmac_ch == fields['hmac']:
-            return True
-        else:
+            if hmac_ch == fields['hmac']:
+                return True
+            else:
+                return False
+        except:
             return False
 
     """def queu_req(self, qname, key,domain):
