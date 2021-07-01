@@ -349,7 +349,7 @@ class Resolver:
             if self.instances[inst]['msgdefault'] == prefix:
                 msgtype = msgdefault
             else:
-                msgtype = 0
+                msgtype = -1
 
         return msgtype
 
