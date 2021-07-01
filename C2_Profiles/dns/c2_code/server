@@ -261,7 +261,7 @@ class Resolver:
                     if self.config['worker'].agents[channel_offer].is_sending():
                         # check if bit_flip has inverted
                         # if not inverted, the agent did not receive the ack of the receiving of the last packet
-                        if bit_flip != self.config['worker'].agents[channel_offer].bit_flip or bit_flip == message_turn:
+                        if bit_flip == message_turn:
                             packet = format(self.config['worker'].agents[channel_offer].message_count,
                                             'x')  # agent will receive the amount of messages the server will send again
                             seq = self.config['worker'].agents[channel_offer].init_seq
