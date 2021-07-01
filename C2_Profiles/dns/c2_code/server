@@ -474,7 +474,7 @@ def agent_message(msg, **kwargs):
         uuid_resp = str(uuid_resp, 'utf-8')
         # this section needs to be updated to 2.2
         try:
-            msg = loop.run_until_complete(MythicCallbackRPC().decrypt_bytes(with_uuid=True, data=response.text, uuid=str(uuid_resp)))
+            msg = loop.run_until_complete(MythicCallbackRPCAux().decrypt_bytes(with_uuid=True, data=response.text, uuid=str(uuid_resp)))
         finally:
             loop.run_until_complete(loop.shutdown_asyncgens())
             loop.close()
@@ -526,6 +526,7 @@ async def agent_message(request, **kwargs):
 
 if __name__ == "__main__":
     sys.path.append("/Mythic/mythic")
+    from MythicCallbackRPCAux import *
     from mythic_c2_container.C2ProfileBase import *
     from mythic_c2_container.MythicCallbackRPC import *
 
