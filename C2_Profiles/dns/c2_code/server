@@ -193,7 +193,8 @@ class Resolver:
                 break
             index = index + 1
 
-        msgtype = self.get_msgtype(qname, inst)
+        msgtype = self.get_msgtype(qname, inst, domain_found)
+
 
         if found == True:
             if msgtype == 0:
@@ -338,7 +339,7 @@ class Resolver:
         self.config['worker'].agents[channel].server_msg_queue = messages
         # this func will parse the full message into blocks using the full size of the DNS query
 
-    def get_msgtype(self, qname, inst):
+    def get_msgtype(self, qname, inst, domain_found):
         prefix = qname.split('.')[0]
 
         if self.instances[inst]['msginit'] == prefix:
