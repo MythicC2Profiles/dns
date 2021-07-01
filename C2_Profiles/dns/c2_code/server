@@ -193,8 +193,7 @@ class Resolver:
                 break
             index = index + 1
 
-        msgtype = self.get_msgtype(qname, inst, domain_found)
-
+        msgtype = self.get_msgtype(qname, inst)
 
         if found == True:
             if msgtype == 0:
@@ -339,7 +338,7 @@ class Resolver:
         self.config['worker'].agents[channel].server_msg_queue = messages
         # this func will parse the full message into blocks using the full size of the DNS query
 
-    def get_msgtype(self, qname, inst, domain_found):
+    def get_msgtype(self, qname, inst):
         prefix = qname.split('.')[0]
 
         if self.instances[inst]['msginit'] == prefix:
@@ -354,18 +353,15 @@ class Resolver:
         return msgtype
 
     def get_fields(self, qname, msgtype, domain):
-        try:
-            fields = {}
-            sections_prev = qname.split(domain)
-            sections = sections_prev[0].split(".")
-    
-            fields['prefix'] = sections[0]
-            fields['tsid'] = sections[1]
-            fields['data'] = sections[2]
-            fields['hmac'] = sections[3]
-            return fields
-        except:
-            return None
+        fields = {}
+        sections_prev = qname.split(domain)
+        sections = sections_prev[0].split(".")
+
+        fields['prefix'] = sections[0]
+        fields['tsid'] = sections[1]
+        fields['data'] = sections[2]
+        fields['hmac'] = sections[3]
+        return fields
 
     def increment_seq(self, seq):
         seq = seq + 1
@@ -374,14 +370,12 @@ class Resolver:
         return seq
 
     def hmac_check(self, fields, msgtype, key):
-        try:
-            hmac_ch = hmac.new(key.encode(), (fields['tsid'] + fields['data']).encode('utf-8'), hashlib.md5).hexdigest()
 
-            if hmac_ch == fields['hmac']:
-                return True
-            else:
-                return False
-        except:
+        hmac_ch = hmac.new(key.encode(), (fields['tsid'] + fields['data']).encode('utf-8'), hashlib.md5).hexdigest()
+
+        if hmac_ch == fields['hmac']:
+            return True
+        else:
             return False
 
     """def queu_req(self, qname, key,domain):
@@ -471,22 +465,20 @@ def agent_message(msg, **kwargs):
     try:
 
 
-        response = requests.post(config['mythic_address'], data=msg, headers={"Mythic": "dns","content-type": "text/plain"},
+        response = requests.post(config['mythic_address'], data=msg, headers={"Mythic":"dns","content-type": "text/plain"},
                                  verify=False)
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         decoded_response = base64.b64decode(response.text)
         uuid_resp = decoded_response[:36]
         uuid_resp = str(uuid_resp, 'utf-8')
-        # this section needs to be updated to 2.2
         #try:
-        #    msg = loop.run_until_complete(MythicCallbackRPC().decrypt_bytes(with_uuid=True, data=response.text, uuid=str(uuid_resp)))
+         #   msg = loop.run_until_complete(
+          #      MythicCallbackRPC().decrypt_bytes(with_uuid=True, data=response.text, uuid=str(uuid_resp)))
         #finally:
-        #    loop.run_until_complete(loop.shutdown_asyncgens())
-        #    loop.close()
+         #   loop.run_until_complete(loop.shutdown_asyncgens())
+          #  loop.close()
         # response = requests.post(config['mythic_address'], data=msg, verify=False, cookies=parsed_pack["cookies"],headers=parsed_pack["headers"])
-        #msg = ""
-        #return {"result": response.content, "message": msg.data}
         return {"result": response.content, "message": None}
     except Exception as e:
         return None
@@ -532,7 +524,6 @@ async def agent_message(request, **kwargs):
 
 if __name__ == "__main__":
     sys.path.append("/Mythic/mythic")
-    from MythicCallbackRPCAux import *
     from mythic_c2_container.C2ProfileBase import *
     from mythic_c2_container.MythicCallbackRPC import *
 
