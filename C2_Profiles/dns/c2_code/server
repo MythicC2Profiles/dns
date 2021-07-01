@@ -473,16 +473,15 @@ def agent_message(msg, **kwargs):
         uuid_resp = decoded_response[:36]
         uuid_resp = str(uuid_resp, 'utf-8')
         # this section needs to be updated to 2.2
-        #try:
-         #   msg = loop.run_until_complete(
-          #      MythicCallbackRPC().decrypt_bytes(with_uuid=True, data=response.text, uuid=str(uuid_resp)))
-        #finally:
-         #   loop.run_until_complete(loop.shutdown_asyncgens())
-          #  loop.close()
+        try:
+            msg = loop.run_until_complete(MythicCallbackRPC().decrypt_bytes(with_uuid=True, data=response.text, uuid=str(uuid_resp)))
+        finally:
+            loop.run_until_complete(loop.shutdown_asyncgens())
+            loop.close()
         # response = requests.post(config['mythic_address'], data=msg, verify=False, cookies=parsed_pack["cookies"],headers=parsed_pack["headers"])
-        msg = ""
-        return {"result": response.content, "message": msg}
-        #return {"result": response.content, "message": msg.data}
+        #msg = ""
+        #return {"result": response.content, "message": msg}
+        return {"result": response.content, "message": msg.data}
     except Exception as e:
         return None
 
