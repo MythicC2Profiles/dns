@@ -357,12 +357,15 @@ class Resolver:
         fields = {}
         sections_prev = qname.split(domain)
         sections = sections_prev[0].split(".")
-
-        fields['prefix'] = sections[0]
-        fields['tsid'] = sections[1]
-        fields['data'] = sections[2]
-        fields['hmac'] = sections[3]
-        return fields
+        
+        if len(sections) > 3:
+            fields['prefix'] = sections[0]
+            fields['tsid'] = sections[1]
+            fields['data'] = sections[2]
+            fields['hmac'] = sections[3]
+            return fields
+        else:
+            return None
 
     def increment_seq(self, seq):
         seq = seq + 1
