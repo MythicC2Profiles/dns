@@ -248,7 +248,7 @@ class Resolver:
             else:
                 if channel_offer not in self.config['worker'].agents:
                     reply = request.reply()
-                    reply.add_answer(*RR.fromZone('0.0.0.0 60 IN TXT "txtvers=1"')
+                    reply.add_answer(*RR.fromZone('0.0.0.0 60 IN TXT "txtvers=1"'))
                     return reply
 
                 if bit_flip == reset_turn:
