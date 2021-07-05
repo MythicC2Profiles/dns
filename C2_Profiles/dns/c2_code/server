@@ -149,8 +149,6 @@ class Agent_Con:
     def get_packet(self, seq):
         packet_id = self.seq_to_id(seq)
         packet = self.server_msg_queue[packet_id]
-        with open("log.txt","a") as myfile:
-            myfile.write("Sending back packet["+str(packet_id)+"]: "+packet)
         return packet
 
 
@@ -229,8 +227,7 @@ class Resolver:
 
                     seq = self.increment_seq(seq)
                 except Exception as e:
-                    with open("log.txt","a") as myfile:
-                        myfile.write("EXCEPTION: "+str(e))
+                    pass
                 try:    
                     self.config['worker'].agents[channel].init_seq = seq  # initial seq will be a random value set by the agent (0-200)
                     msg_reply = ""
@@ -239,8 +236,7 @@ class Resolver:
                     msg_reply = self.create_reply(channel, new_tsid, domain_found, bit_flip, seq, fields['data'],msgtype)
                     self.config['worker'].agents[channel].bit_flip = agent_turn
                 except Exception as e:
-                    with open("log.txt","a") as myfile:
-                        myfile.write("EXCEPTION 2:"+str(e))
+                    pass
                 reply = request.reply()
                 reply.add_answer(RR(qname, qtype, rdata=TXT(msg_reply)))
 
@@ -252,8 +248,6 @@ class Resolver:
                     return reply
 
                 if bit_flip == reset_turn:
-                    with open("log.txt", "a") as myfile:
-                        myfile.write("MSG of type reset")
                     if self.config['worker'].agents[channel_offer].is_sending() != False:
                         self.config['worker'].agents[channel_offer].renew_server_msg_queue()
                     seq = self.config['worker'].agents[channel_offer].init_seq
@@ -271,8 +265,6 @@ class Resolver:
                     # if there are packets, server is sending commands
                     # if no packets, agent is sending data
                     if self.config['worker'].agents[channel_offer].is_sending():
-                        with open("log.txt","a") as myfile:
-                            myfile.write("AGENT SENDING")
                         # check if bit_flip has inverted
                         # if not inverted, the agent did not receive the ack of the receiving of the last packet
                         if bit_flip == message_turn or bit_flip == agent_turn: #agent turn in case last packet did not receive confirmation in agent side
@@ -290,22 +282,16 @@ class Resolver:
                                 
                                 packet = binascii.b2a_hex(os.urandom(10))
                                 self.config['worker'].agents[channel_offer].bit_flip = reset_turn
-                                with open("log.txt","a") as myfile:
-                                    myfile.open("EXCP: "+str(e))
                             # if server received ack of the last packet
                             # packet will have no content and bit will be flipped
                                 bit_flip = str(self.config['worker'].agents[channel_offer].bit_flip)
                         
                         new_tsid = "{:02x}".format(channel_offer) + "{:06x}".format(seq)
                         msg_reply = new_tsid + "." + str(bit_flip) + "." + str(packet)
-                        with open("log.txt", "a") as myfile:
-                            myfile.write("MSG Full: " + msg_reply)
                         reply = request.reply()
                         reply.add_answer(RR(qname, qtype, rdata=TXT(msg_reply)))
                     else:
                         # data from agent
-                        with open("log.txt","a") as myfile:
-                            myfile.write("Data from agent\n")
                         try:
                             if bit_flip == self.config['worker'].agents[channel_offer].bit_flip and fields['data'] != \
                                     self.config['worker'].agents[channel_offer].cache_code:
@@ -315,13 +301,8 @@ class Resolver:
                                                           fields['data'], msgtype)
                             reply = request.reply()
                             reply.add_answer(RR(qname, qtype, rdata=TXT(msg_reply)))
-                            with open("log.txt", "a") as myfile:
-                                myfile.write("\nMESSAGE REPLY: " + msg_reply)
                         except Exception as e:
                             print(str(e))
-                            with open("log.txt", "a") as myfile:
-                                myfile.write("EXCEPTION: " + str(e))
-                                myfile.write("EXCEPTION: " + str(traceback.format_exc()))
 
         return reply
 
@@ -329,62 +310,34 @@ class Resolver:
         cached_msg = False
         if data == self.config['worker'].agents[channel].cache_code and msgtype != msginit:
             cached_msg = True
-        with open("log.txt", "a") as myfile:
-            myfile.write("Creating Reply" + "\n")
-            myfile.write("Comparator: " + str(comparator) + "\n")
-            myfile.write("Bit_Flip Agent: " + str(self.config['worker'].agents[channel].bit_flip) + "\n")
         if comparator == self.config['worker'].agents[channel].bit_flip and cached_msg == False:
-            with open("log.txt", "a") as myfile:
-                myfile.write("SAME" + "\n")
             # agent is just sending the packets from the same message
             return str(new_tsid) + "." + str(self.config['worker'].agents[channel].bit_flip) + "." + str(domain)
         else:
             # agent finished sending packets and received the ack from the last packet
-            with open("log.txt", "a") as myfile:
-                myfile.write("DIFFERENT" + "\n")
             # agent changed the bit_flip signaling that packets are over
             if cached_msg == False:
                 full_msg = self.rebuild_pack(channel, seq)
                 self.config['worker'].agents[channel].cached_message_client = full_msg
-                with open("log.txt", "a") as myfile:
-                    myfile.write("Caching Message : " + full_msg + "\n")
             else:
                 self.use_caching(channel, seq)
                 full_msg = self.config['worker'].agents[channel].cached_message_client
-                with open("log.txt", "a") as myfile:
-                    myfile.write("Using CACHED MSG CLIENT: " + full_msg + "\n")
             mythic_msg = agent_message(full_msg)
             resp_msg = mythic_msg['result']
             dec_msg = mythic_msg['message']
             if dec_msg == self.config['worker'].agents[channel].cached_message_server and False:
                 resp_msg = self.config['worker'].agents[channel].cache_code
                 self.setup_resp_queue_cache(resp_msg, channel)
-                with open("log.txt", "a") as myfile:
-                    myfile.write("Server Resp will use cache \n")
             else:
                 self.config['worker'].agents[channel].cached_message_server = dec_msg
                 self.setup_resp_queue(resp_msg, channel)
-                with open("log.txt", "a") as myfile:
-                    myfile.write("Server Resp will not use cache \n")
             new_tsid = "{:02x}".format(channel) + "{:06x}".format(self.config['worker'].agents[channel].init_seq)
-            with open("log.txt", "a") as myfile:
-                myfile.write("REPLY Invert: " + str(new_tsid) + "." + str(
-                    self.config['worker'].agents[channel].bit_flip) + "." + format(
-                    self.config['worker'].agents[channel].message_count, 'x'))
             return str(new_tsid) + "." + str(self.config['worker'].agents[channel].bit_flip) + "." + format(
                 self.config['worker'].agents[channel].message_count, 'x')
 
     def setup_resp_queue_cache(self, resp_msg, channel):
         messages = [resp_msg]
-
-        with open("log.txt", "a") as myfile:
-            myfile.write("Server response will contain: " + str(len(messages)) + " messages\n")
-
-        with open("log.txt", "a") as myfile:
-            myfile.write("Message: " + str(messages) + "\n")
-
         self.config['worker'].agents[channel].message_count = len(messages)
-
         self.config['worker'].agents[channel].server_msg_queue = messages
         # this func will parse the full message into blocks using the full size of the DNS query
 
@@ -392,13 +345,7 @@ class Resolver:
         packet_size = self.config['worker'].agents[channel].get_packet_size()
         resp_msg = resp_msg.hex()
         messages = textwrap.wrap(resp_msg, packet_size)
-        with open("log.txt", "a") as myfile:
-            myfile.write("Server response will contain: " + str(len(messages)) + " messages\n")
         self.config['worker'].agents[channel].message_count = len(messages)
-        with open("log.txt", "a") as myfile:
-            myfile.write("printing messages from server: " + "\n")
-            for i in messages:
-                myfile.write(i + "\n")
         self.config['worker'].agents[channel].server_msg_queue = messages
         # this func will parse the full message into blocks using the full size of the DNS query
 
@@ -425,12 +372,6 @@ class Resolver:
         fields['tsid'] = sections[1]
         fields['data'] = sections[2]
         fields['hmac'] = sections[3]
-        with open("log.txt", "a") as myfile:
-            myfile.write("MSGINITI DEFAULT FIELDS: " + "\n")
-            myfile.write("PREFIX: " + fields['prefix'] + "\n")
-            myfile.write("TSID: " + fields['tsid'] + "\n")
-            myfile.write("DATA: " + fields['data'] + "\n")
-            myfile.write("HMAC: " + fields['hmac'] + "\n")
         return fields
 
     def increment_seq(self, seq):
@@ -442,74 +383,32 @@ class Resolver:
     def hmac_check(self, fields, msgtype, key):
 
         hmac_ch = hmac.new(key.encode(), (fields['tsid'] + fields['data']).encode('utf-8'), hashlib.md5).hexdigest()
-        with open("log.txt", "a") as myfile:
-            myfile.write("hmac check: " + hmac_ch)
-
         if hmac_ch == fields['hmac']:
             return True
         else:
             return False
 
-    """def queu_req(self, qname, key,domain):
-        sections = qname.split(domain)
-        sections_new = sections[0].split(".")
-        #should have 3 sections:
-
-        #count.BYTES.DOMAIN
-
-        #if query does not have starting point
-        #negotiate starting point
-
-        # else
-        # enqueue
-
-        if len(sections_new) == 2:
-            #negotiation to start
-            import random
-            self.config[key]['stp'] = random.randint(1, 100000)
-            return True
-        else:
-            if len(sections_new) == 3:
-                #
-                count = sections[0]
-                bytes = sections[1]
-                self.config[key]['queue'][count] = bytes
-            else:
-                if len(sections_new) == 1:
-                    pass
-
-"""
 
     def check_channel(self, channel_offer, bit_flip, qname, data):
         self.config['worker'].mutex_msginit.acquire()
         if bit_flip == init_seq:
-            with open("log.txt", "a") as myfile:
-                myfile.write("BIT FLIP INIT TYPE" + "\n")
             # new connection
             if channel_offer in self.config['worker'].agents:
                 # channel collision
                 # select another channel
                 # create the agent object
-                with open("log.txt", "a") as myfile:
-                    myfile.write("Channel Colision" + "\n")
                 alternate_channel = self.get_next_channel(channel_offer)
                 self.config['worker'].agents[alternate_channel] = Agent_Con(bit_flip, alternate_channel, data)
                 self.config['worker'].mutex_msginit.release()
-                with open("log.txt", "a") as myfile:
-                    myfile.write("New Channel: " + str(alternate_channel))
                 return alternate_channel
             else:
                 self.config['worker'].agents[channel_offer] = Agent_Con(bit_flip, channel_offer, data)
-                with open("log.txt", "a") as myfile:
-                    myfile.write("Added agent object" + "\n")
                 self.config['worker'].mutex_msginit.release()
                 return channel_offer
         else:
             if bit_flip == agent_turn or bit_flip == server_turn:
                 # agent is already connected and starting another message
                 # object already exists
-                with open("log.txt","a") as myfile:
-                    myfile.write("EXTRA AGENT")
                 self.config['worker'].mutex_msginit.release()
                 return channel_offer
 
@@ -530,13 +429,9 @@ class Resolver:
         full_msg = ""
         it = 0
         while it in self.config['worker'].agents[channel].client_msg_queue:
-            with open("log.txt", "a") as myfile:
-                myfile.write("Concatenating msg: " + self.config['worker'].agents[channel].client_msg_queue[it] + "\n")
             full_msg = full_msg + self.config['worker'].agents[channel].client_msg_queue[it]
             it = it + 1
 
-        with open("log.txt", "a") as myfile:
-            myfile.write("Rebuilding packet: " + full_msg + "\n")
         bytes_object = bytes.fromhex(full_msg)
         decoded_msg = bytes_object.decode("ASCII")
         seq = self.increment_seq(seq)
@@ -554,8 +449,6 @@ def agent_message(msg, **kwargs):
 
         response = requests.post(config['mythic_address'], data=msg, headers={"Mythic":"dns","content-type": "text/plain"},
                                  verify=False)
-        with open("log.txt", "a") as myfile:
-            myfile.write("Resp server: " + str(response.status_code) + " " + response.text + "\n")
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         decoded_response = base64.b64decode(response.text)
@@ -570,8 +463,6 @@ def agent_message(msg, **kwargs):
         # response = requests.post(config['mythic_address'], data=msg, verify=False, cookies=parsed_pack["cookies"],headers=parsed_pack["headers"])
         return {"result": response.content, "message": None}
     except Exception as e:
-        with open("log.txt", "a") as myfile:
-            myfile.write("EXCEPTION: " + str(e) + "\n")
         return None
 
 
@@ -583,35 +474,6 @@ async def print_flush(message):
 def server_error_handler(request, exception):
     pass
 
-
-"""
-async def agent_message(request, **kwargs):
-    global config
-    try:
-        if config[request.app.name]['debug']:
-            await print_flush("agent_message request from: {} with {} and {}".format(request.url, request.cookies, request.headers))
-            await print_flush(" and URI: {}".format(request.query_string))
-        if config[request.app.name]['debug']:
-            await print_flush("Forwarding along to: {}".format(config['mythic_address']))
-        if request.method == "POST":
-            # manipulate the request if needed
-            #await MythicCallbackRPC().add_event_message(message="got a POST message")
-            response = requests.post(config['mythic_address'], data=request.body, verify=False, cookies=request.cookies, headers=request.headers)
-        else:
-            # manipulate the request if needed
-            #await MythicCallbackRPC().add_event_message(message="got a GET message")
-            #msg = await MythicCallbackRPC().encrypt_bytes(with_uuid=True, data="my message".encode(), uuid="eaf10700-cb30-402d-b101-8e35d67cdb41")
-            #await MythicCallbackRPC().add_event_message(message=msg.response)
-            response = requests.get(config['mythic_address'] + "?{}".format(request.query_string), verify=False, data=request.body, cookies=request.cookies, headers=request.headers)
-        return raw(response.content, headers=config[request.app.name]['headers'], status=response.status_code)
-    except Exception as e:
-        if request is None:
-            await print_flush("Invalid HTTP Method - Likely HTTPS trying to talk to HTTP")
-            return server_error_handler(request, e)
-        if config[request.app.name]['debug']:
-            await print_flush("error in agent_message: {}".format(str(e)))
-        return server_error_handler(request, e)
-"""
 
 if __name__ == "__main__":
     sys.path.append("/Mythic/mythic")
