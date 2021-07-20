@@ -172,15 +172,17 @@ class Resolver:
                 break
             index = index + 1
 
-        msgtype = self.get_msgtype(qname, inst)
+        if found == True:
+            msgtype = self.get_msgtype(qname, inst)
 
         if found == True:
             if msgtype == 0:
                 found = False
             else:
                 found = True
-
-        fields = self.get_fields(qname, msgtype, domain_found)
+                
+        if found == True:
+            fields = self.get_fields(qname, msgtype, domain_found)
 
         if found == False or fields == None or self.hmac_check(fields, msgtype, self.instances[inst]['key']) == False:
 
