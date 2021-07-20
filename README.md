@@ -8,6 +8,10 @@ This is a Mythic C2 Profile called dns. It implements a DNS Server that listens 
 
 The c2 profile has `mythic_c2_container==0.0.22` PyPi package installed and reports to Mythic as version "3".
 
+## Implementing DNS Profile for Custom Agents:
+
+
+
 ## How to install an agent in this format within Mythic
 
 When it's time for you to test out your install or for another user to install your agent, it's pretty simple. Within Mythic is a `install_agent_from_github.sh` script (https://github.com/its-a-feature/Mythic/blob/master/install_agent_from_github.sh). You can run this in one of two ways:
