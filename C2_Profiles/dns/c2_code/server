@@ -294,7 +294,7 @@ class Resolver:
         else:
             # agent finished sending packets and received the ack from the last packet
             # agent changed the bit_flip signaling that packets are over
-            if cached_msg == False:
+            if cached_msg == False and bool(self.config['worker'].agents[channel].client_msg_queue):
                 full_msg = self.rebuild_pack(channel, seq)
                 self.config['worker'].agents[channel].cached_message_client = full_msg
             else:
