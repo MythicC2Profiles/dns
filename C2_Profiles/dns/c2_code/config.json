@@ -3,6 +3,7 @@
     {
       "domains": "domain1.com,domain2.com",
       "key": "hmac secret key",
+      "debug":"false",
       "msginit": "init",
       "msgdefault": "default"
     }
