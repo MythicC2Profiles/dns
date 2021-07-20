@@ -26,11 +26,10 @@ The profile reads a `config.json` file for a set of instances of `Sanic` webserv
 {
   "instances": [
     {
-      "domains": "domain1.com,domain2.com",
+      "domains": "sub.domain1.com,sub.domain2.com",
       "key": "hmac secret key",
-      "debug": false,
-      "msginit": "subdomain for connection initialization (e.g. somethingnotsuspicious1)",
-      "msgdefault": "subdomain for default messages (e.g. somethingnotsuspicious2)"
+      "msginit": "init",
+      "msgdefault": "default"
     }
   ]
 }
@@ -45,6 +44,18 @@ The profile reads a `config.json` file for a set of instances of `Sanic` webserv
   
 ```
 
+### JSON Parameters
+#### Domains
+The domains configured for resolution in the DNS Server. Make sure to setup these domains in your registrar and in the payload building.
+   
+#### HMAC
+The HMAC key that will be used to check against each query. Make sure to setup the key correctly in the payload creation page with the same value here.
+    
+#### msginit
+Prefix for the initialization phase. Can be any arbitrary value with a maximum of 63 characters.
+    
+#### msgdefault
+Prefix for the subsequent phases. Can be any arbitrary value with a maximum of 63 characters.
 
 ### Profile Options
 #### Base64 of a 32-byte AES Key
@@ -56,4 +67,6 @@ Base64 value of the AES pre-shared key to use for communication with the agent. 
 This profile uses TXT queries to communicate with the DNS server. These queries are likely to stand out in a mature environment.
   
 ## Development
+
+
 
