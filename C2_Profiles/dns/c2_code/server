@@ -17,11 +17,14 @@ import traceback
 import base64
 import uuid
 import binascii
-
+from mythic_c2_container.MythicRPC import MythicRPC
 from dnslib import TXT
 from threading import Thread, Lock
 
+from contextlib import suppress 
+
 config = {}
+
 from dnslib.server import DNSServer, DNSLogger, DNSRecord
 from dnslib.dns import RR
 
@@ -305,7 +308,7 @@ class Resolver:
             mythic_msg = agent_message(full_msg)
             resp_msg = mythic_msg['result']
             dec_msg = mythic_msg['message']
-            if dec_msg == self.config['worker'].agents[channel].cached_message_server and False:
+            if dec_msg != None and dec_msg == self.config['worker'].agents[channel].cached_message_server:
                 resp_msg = self.config['worker'].agents[channel].cache_code
                 self.setup_resp_queue_cache(resp_msg, channel)
             else:
@@ -455,23 +458,21 @@ class Resolver:
 def agent_message(msg, **kwargs):
     global config
     try:
-
-
         response = requests.post(config['mythic_address'], data=msg, headers={"Mythic":"dns","content-type": "text/plain"},
                                  verify=False)
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        decoded_response = base64.b64decode(response.text)
-        uuid_resp = decoded_response[:36]
-        uuid_resp = str(uuid_resp, 'utf-8')
-        #try:
-         #   msg = loop.run_until_complete(
-          #      MythicCallbackRPC().decrypt_bytes(with_uuid=True, data=response.text, uuid=str(uuid_resp)))
-        #finally:
-         #   loop.run_until_complete(loop.shutdown_asyncgens())
-          #  loop.close()
-        # response = requests.post(config['mythic_address'], data=msg, verify=False, cookies=parsed_pack["cookies"],headers=parsed_pack["headers"])
-        return {"result": response.content, "message": None}
+        decrypted_message = ""
+        try:
+            loop = asyncio.get_event_loop()
+        except:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        try:
+            decrypted_message = loop.run_until_complete(MythicRPC().execute("create_decrypted_message", message=response.text, c2_profile_name="dns")).response
+        except Exception as e:
+            return {"result": response.content, "message": None}
+        if (decrypted_message["action"] == "staging_rsa" or decrypted_message["action"] == "checkin"):
+            return {"result": response.content, "message": None}
+        return {"result": response.content, "message": str(decrypted_message)}
     except Exception as e:
         return None
 
@@ -485,39 +486,8 @@ def server_error_handler(request, exception):
     pass
 
 
-"""
-async def agent_message(request, **kwargs):
-    global config
-    try:
-        if config[request.app.name]['debug']:
-            await print_flush("agent_message request from: {} with {} and {}".format(request.url, request.cookies, request.headers))
-            await print_flush(" and URI: {}".format(request.query_string))
-        if config[request.app.name]['debug']:
-            await print_flush("Forwarding along to: {}".format(config['mythic_address']))
-        if request.method == "POST":
-            # manipulate the request if needed
-            #await MythicCallbackRPC().add_event_message(message="got a POST message")
-            response = requests.post(config['mythic_address'], data=request.body, verify=False, cookies=request.cookies, headers=request.headers)
-        else:
-            # manipulate the request if needed
-            #await MythicCallbackRPC().add_event_message(message="got a GET message")
-            #msg = await MythicCallbackRPC().encrypt_bytes(with_uuid=True, data="my message".encode(), uuid="eaf10700-cb30-402d-b101-8e35d67cdb41")
-            #await MythicCallbackRPC().add_event_message(message=msg.response)
-            response = requests.get(config['mythic_address'] + "?{}".format(request.query_string), verify=False, data=request.body, cookies=request.cookies, headers=request.headers)
-        return raw(response.content, headers=config[request.app.name]['headers'], status=response.status_code)
-    except Exception as e:
-        if request is None:
-            await print_flush("Invalid HTTP Method - Likely HTTPS trying to talk to HTTP")
-            return server_error_handler(request, e)
-        if config[request.app.name]['debug']:
-            await print_flush("error in agent_message: {}".format(str(e)))
-        return server_error_handler(request, e)
-"""
-
 if __name__ == "__main__":
     sys.path.append("/Mythic/mythic")
-    from mythic_c2_container.C2ProfileBase import *
-    from mythic_c2_container.MythicCallbackRPC import *
 
     config_file = open("config.json", 'rb')
     main_config = json.loads(config_file.read().decode('utf-8'))
@@ -536,7 +506,7 @@ if __name__ == "__main__":
         instances = {}
         for inst in main_config['instances']:
             instances[index] = {'debug': inst['debug'],
-                                'domains': inst['domains'], 'key': inst['key'], 'msginit': inst['msginit'],
+                                'domains': inst['callback_domains'], 'key': inst['hmac_key'], 'msginit': inst['msginit'],
                                 'msgdefault': inst['msgdefault']}
             if inst['debug']:
                 print("Debugging statements are enabled. This gives more context, but might be a performance hit")

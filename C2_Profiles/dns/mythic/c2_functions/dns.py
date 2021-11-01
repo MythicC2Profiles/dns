@@ -35,12 +35,6 @@ class DNS(C2Profile):
             required=False,
         ),
         C2ProfileParameter(
-            name="domain_front",
-            description="Host header value for domain fronting",
-            default_value="",
-            required=False,
-        ),
-        C2ProfileParameter(
             name="AESPSK",
             description="Crypto type",
             default_value="aes256_hmac",
