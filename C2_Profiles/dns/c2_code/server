@@ -148,7 +148,6 @@ class Resolver:
         self.config['worker'] = worker
 
     def resolve(self, request, handler):
-
         qclass = request.questions[0].qclass
         qname = str(request.questions[0].qname)
         qtype = request.questions[0].qtype
@@ -210,7 +209,8 @@ class Resolver:
 
                     seq = self.increment_seq(seq)
                 except Exception as e:
-                    pass
+                    with open("log4.txt","a") as t:
+                        t.write("Ex:"+str(e)+"\n")
                 try:    
                     self.config['worker'].agents[channel].init_seq = seq  # initial seq will be a random value set by the agent (0-200)
                     msg_reply = ""
@@ -219,7 +219,8 @@ class Resolver:
                     msg_reply = self.create_reply(channel, new_tsid, domain_found, bit_flip, seq, fields['data'],msgtype)
                     self.config['worker'].agents[channel].bit_flip = agent_turn
                 except Exception as e:
-                    pass
+                    with open("log4.txt") as t:
+                        t.write("EX2: "+str(e)+"\n")
                 reply = request.reply()
                 reply.add_answer(RR(qname, qtype, rdata=TXT(msg_reply)))
 
@@ -234,10 +235,9 @@ class Resolver:
                     if self.config['worker'].agents[channel_offer].is_sending() != False:
                         self.config['worker'].agents[channel_offer].renew_server_msg_queue()
                     seq = self.config['worker'].agents[channel_offer].init_seq
-                    packet = ""
+                    packet = binascii.b2a_hex(os.urandom(10)).decode("utf-8")
                     new_tsid = "{:02x}".format(channel_offer) + "{:06x}".format(seq)
-                    msg_reply = new_tsid + "." + str(self.config['worker'].agents[channel_offer].bit_flip) + "." + str(
-                        packet)
+                    msg_reply = new_tsid + "." + str(self.config['worker'].agents[channel_offer].bit_flip) + "." + packet
                     reply = request.reply()
                     reply.add_answer(RR(qname, qtype, rdata=TXT(msg_reply)))
 
@@ -262,15 +262,16 @@ class Resolver:
                                 packet = self.config['worker'].agents[channel_offer].get_packet(seq)
                                 
                             except Exception as e:
-                                
-                                packet = binascii.b2a_hex(os.urandom(10))
+                                with open("log4.txt","a") as t:
+                                    t.write(str(e)+"\n")
+                                packet = binascii.b2a_hex(os.urandom(10)).decode("utf-8")
                                 self.config['worker'].agents[channel_offer].bit_flip = reset_turn
                             # if server received ack of the last packet
                             # packet will have no content and bit will be flipped
                                 bit_flip = str(self.config['worker'].agents[channel_offer].bit_flip)
                         
                         new_tsid = "{:02x}".format(channel_offer) + "{:06x}".format(seq)
-                        msg_reply = new_tsid + "." + str(bit_flip) + "." + str(packet)
+                        msg_reply = new_tsid + "." + str(bit_flip) + "." + packet
                         reply = request.reply()
                         reply.add_answer(RR(qname, qtype, rdata=TXT(msg_reply)))
                     else:
@@ -319,7 +320,8 @@ class Resolver:
                 self.config['worker'].agents[channel].message_count, 'x')
 
     def setup_resp_queue_cache(self, resp_msg, channel):
-        messages = [resp_msg]
+        messages = []
+        messages.append(resp_msg)
         self.config['worker'].agents[channel].message_count = len(messages)
 
         self.config['worker'].agents[channel].server_msg_queue = messages
@@ -468,13 +470,13 @@ def agent_message(msg, **kwargs):
             asyncio.set_event_loop(loop)
         try:
             decrypted_message = loop.run_until_complete(MythicRPC().execute("create_decrypted_message", message=response.text, c2_profile_name="dns")).response
+            if (decrypted_message["action"] == "staging_rsa" or decrypted_message["action"] == "checkin"):
+                return {"result": response.content, "message": None}
         except Exception as e:
-            return {"result": response.content, "message": None}
-        if (decrypted_message["action"] == "staging_rsa" or decrypted_message["action"] == "checkin"):
-            return {"result": response.content, "message": None}
+             return {"result": response.content, "message": None}
         return {"result": response.content, "message": str(decrypted_message)}
     except Exception as e:
-        return None
+        print(str(e))
 
 
 async def print_flush(message):
@@ -485,9 +487,27 @@ async def print_flush(message):
 def server_error_handler(request, exception):
     pass
 
+def overwrite_log_recv(n1, n2, n3):
+    pass
+
+def overwrite_log_send(n1, n2, n3):
+    pass
+
+def overwrite_log_request(n1, n2, n3):
+    pass
+
+def overwrite_log_reply(n1, n2, n3):
+    pass
+
+
 
 if __name__ == "__main__":
     sys.path.append("/Mythic/mythic")
+    
+    DNSLogger.log_recv = overwrite_log_recv
+    DNSLogger.log_send = overwrite_log_send
+    DNSLogger.log_request = overwrite_log_request
+    DNSLogger.log_reply = overwrite_log_reply
 
     config_file = open("config.json", 'rb')
     main_config = json.loads(config_file.read().decode('utf-8'))
@@ -524,6 +544,6 @@ if __name__ == "__main__":
             time.sleep(1)
             sys.stdout.flush()
     except Exception as e:
-        print(e)
+        print(str(e)
      
     
