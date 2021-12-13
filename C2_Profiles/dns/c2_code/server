@@ -21,7 +21,7 @@ from mythic_c2_container.MythicRPC import MythicRPC
 from dnslib import TXT
 from threading import Thread, Lock
 
-from contextlib import suppress 
+from contextlib import suppress
 
 config = {}
 
@@ -152,7 +152,6 @@ class Resolver:
         qname = str(request.questions[0].qname)
         qtype = request.questions[0].qtype
 
-
         # 1) query received
         # 2) check each instance if has the domain
 
@@ -182,7 +181,7 @@ class Resolver:
                 found = False
             else:
                 found = True
-                
+
         if found == True:
             fields = self.get_fields(qname, msgtype, domain_found)
 
@@ -205,22 +204,25 @@ class Resolver:
                 # agent is starting communications
                 channel = ""
                 try:
-                    channel = self.check_channel(channel_offer, bit_flip, domain_found,fields['data'])  # channel value is the reference for the agent object
+                    channel = self.check_channel(channel_offer, bit_flip, domain_found,
+                                                 fields['data'])  # channel value is the reference for the agent object
 
                     seq = self.increment_seq(seq)
                 except Exception as e:
-                    with open("log4.txt","a") as t:
-                        t.write("Ex:"+str(e)+"\n")
-                try:    
-                    self.config['worker'].agents[channel].init_seq = seq  # initial seq will be a random value set by the agent (0-200)
+                    with open("log4.txt", "a") as t:
+                        t.write("Ex:" + str(e) + "\n")
+                try:
+                    self.config['worker'].agents[
+                        channel].init_seq = seq  # initial seq will be a random value set by the agent (0-200)
                     msg_reply = ""
-                
+
                     new_tsid = "{:02x}".format(channel) + "{:06x}".format(seq)
-                    msg_reply = self.create_reply(channel, new_tsid, domain_found, bit_flip, seq, fields['data'],msgtype)
+                    msg_reply = self.create_reply(channel, new_tsid, domain_found, bit_flip, seq, fields['data'],
+                                                  msgtype)
                     self.config['worker'].agents[channel].bit_flip = agent_turn
                 except Exception as e:
                     with open("log4.txt") as t:
-                        t.write("EX2: "+str(e)+"\n")
+                        t.write("EX2: " + str(e) + "\n")
                 reply = request.reply()
                 reply.add_answer(RR(qname, qtype, rdata=TXT(msg_reply)))
 
@@ -237,7 +239,8 @@ class Resolver:
                     seq = self.config['worker'].agents[channel_offer].init_seq
                     packet = binascii.b2a_hex(os.urandom(10)).decode("utf-8")
                     new_tsid = "{:02x}".format(channel_offer) + "{:06x}".format(seq)
-                    msg_reply = new_tsid + "." + str(self.config['worker'].agents[channel_offer].bit_flip) + "." + packet
+                    msg_reply = new_tsid + "." + str(
+                        self.config['worker'].agents[channel_offer].bit_flip) + "." + packet
                     reply = request.reply()
                     reply.add_answer(RR(qname, qtype, rdata=TXT(msg_reply)))
 
@@ -250,7 +253,7 @@ class Resolver:
                     if self.config['worker'].agents[channel_offer].is_sending():
                         # check if bit_flip has inverted
                         # if not inverted, the agent did not receive the ack of the receiving of the last packet
-                        if bit_flip == message_turn or bit_flip == agent_turn: #agent turn in case last packet did not receive confirmation in agent side
+                        if bit_flip == message_turn or bit_flip == agent_turn:  # agent turn in case last packet did not receive confirmation in agent side
                             packet = format(self.config['worker'].agents[channel_offer].message_count,
                                             'x')  # agent will receive the amount of messages the server will send again
                             seq = self.config['worker'].agents[channel_offer].init_seq
@@ -260,16 +263,16 @@ class Resolver:
                             # this means the agent received all the messages and is confirming the server that it will start replying
                             try:
                                 packet = self.config['worker'].agents[channel_offer].get_packet(seq)
-                                
+
                             except Exception as e:
-                                with open("log4.txt","a") as t:
-                                    t.write(str(e)+"\n")
+                                with open("log4.txt", "a") as t:
+                                    t.write(str(e) + "\n")
                                 packet = binascii.b2a_hex(os.urandom(10)).decode("utf-8")
                                 self.config['worker'].agents[channel_offer].bit_flip = reset_turn
-                            # if server received ack of the last packet
-                            # packet will have no content and bit will be flipped
+                                # if server received ack of the last packet
+                                # packet will have no content and bit will be flipped
                                 bit_flip = str(self.config['worker'].agents[channel_offer].bit_flip)
-                        
+
                         new_tsid = "{:02x}".format(channel_offer) + "{:06x}".format(seq)
                         msg_reply = new_tsid + "." + str(bit_flip) + "." + packet
                         reply = request.reply()
@@ -460,7 +463,8 @@ class Resolver:
 def agent_message(msg, **kwargs):
     global config
     try:
-        response = requests.post(config['mythic_address'], data=msg, headers={"Mythic":"dns","content-type": "text/plain"},
+        response = requests.post(config['mythic_address'], data=msg,
+                                 headers={"Mythic": "dns", "content-type": "text/plain"},
                                  verify=False)
         decrypted_message = ""
         try:
@@ -469,11 +473,12 @@ def agent_message(msg, **kwargs):
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
         try:
-            decrypted_message = loop.run_until_complete(MythicRPC().execute("create_decrypted_message", message=response.text, c2_profile_name="dns")).response
+            decrypted_message = loop.run_until_complete(
+                MythicRPC().execute("create_decrypted_message", message=response.text, c2_profile_name="dns")).response
             if (decrypted_message["action"] == "staging_rsa" or decrypted_message["action"] == "checkin"):
                 return {"result": response.content, "message": None}
         except Exception as e:
-             return {"result": response.content, "message": None}
+            return {"result": response.content, "message": None}
         return {"result": response.content, "message": str(decrypted_message)}
     except Exception as e:
         print(str(e))
@@ -487,23 +492,26 @@ async def print_flush(message):
 def server_error_handler(request, exception):
     pass
 
+
 def overwrite_log_recv(n1, n2, n3):
     pass
+
 
 def overwrite_log_send(n1, n2, n3):
     pass
 
+
 def overwrite_log_request(n1, n2, n3):
     pass
+
 
 def overwrite_log_reply(n1, n2, n3):
     pass
 
 
-
 if __name__ == "__main__":
     sys.path.append("/Mythic/mythic")
-    
+
     DNSLogger.log_recv = overwrite_log_recv
     DNSLogger.log_send = overwrite_log_send
     DNSLogger.log_request = overwrite_log_request
@@ -526,7 +534,8 @@ if __name__ == "__main__":
         instances = {}
         for inst in main_config['instances']:
             instances[index] = {'debug': inst['debug'],
-                                'domains': inst['callback_domains'], 'key': inst['hmac_key'], 'msginit': inst['msginit'],
+                                'domains': inst['callback_domains'], 'key': inst['hmac_key'],
+                                'msginit': inst['msginit'],
                                 'msgdefault': inst['msgdefault']}
             if inst['debug']:
                 print("Debugging statements are enabled. This gives more context, but might be a performance hit")
@@ -544,6 +553,4 @@ if __name__ == "__main__":
             time.sleep(1)
             sys.stdout.flush()
     except Exception as e:
-        print(str(e)
-     
-    
+        print(str(e))
