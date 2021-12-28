@@ -28,6 +28,7 @@ config = {}
 from dnslib.server import DNSServer, DNSLogger, DNSRecord
 from dnslib.dns import RR
 
+loop = ""
 reset_turn = 4  # bit_flip to reset cycle
 message_turn = 3  # bit_flip used to control message_count req
 server_turn = 2  # server turn to reply
@@ -151,7 +152,7 @@ class Resolver:
         qclass = request.questions[0].qclass
         qname = str(request.questions[0].qname)
         qtype = request.questions[0].qtype
-
+        reply = ""
         # 1) query received
         # 2) check each instance if has the domain
 
@@ -209,8 +210,7 @@ class Resolver:
 
                     seq = self.increment_seq(seq)
                 except Exception as e:
-                    with open("log4.txt", "a") as t:
-                        t.write("Ex:" + str(e) + "\n")
+                    pass
                 try:
                     self.config['worker'].agents[
                         channel].init_seq = seq  # initial seq will be a random value set by the agent (0-200)
@@ -221,8 +221,7 @@ class Resolver:
                                                   msgtype)
                     self.config['worker'].agents[channel].bit_flip = agent_turn
                 except Exception as e:
-                    with open("log4.txt") as t:
-                        t.write("EX2: " + str(e) + "\n")
+                    pass
                 reply = request.reply()
                 reply.add_answer(RR(qname, qtype, rdata=TXT(msg_reply)))
 
@@ -265,8 +264,6 @@ class Resolver:
                                 packet = self.config['worker'].agents[channel_offer].get_packet(seq)
 
                             except Exception as e:
-                                with open("log4.txt", "a") as t:
-                                    t.write(str(e) + "\n")
                                 packet = binascii.b2a_hex(os.urandom(10)).decode("utf-8")
                                 self.config['worker'].agents[channel_offer].bit_flip = reset_turn
                                 # if server received ack of the last packet
@@ -280,8 +277,7 @@ class Resolver:
                     else:
                         # data from agent
                         try:
-                            if bit_flip == self.config['worker'].agents[channel_offer].bit_flip and fields['data'] != \
-                                    self.config['worker'].agents[channel_offer].cache_code:
+                            if bit_flip == self.config['worker'].agents[channel_offer].bit_flip and fields['data'] != self.config['worker'].agents[channel_offer].cache_code:
                                 seq = self.config['worker'].agents[channel_offer].add_packet(fields['data'], seq)
                             new_tsid = "{:02x}".format(channel_offer) + "{:06x}".format(seq)
                             msg_reply = self.create_reply(channel_offer, new_tsid, domain_found, bit_flip, seq,
@@ -312,11 +308,12 @@ class Resolver:
             mythic_msg = agent_message(full_msg)
             resp_msg = mythic_msg['result']
             dec_msg = mythic_msg['message']
-            if dec_msg != None and dec_msg == self.config['worker'].agents[channel].cached_message_server:
+            if dec_msg != 0 and dec_msg != None and dec_msg != "None" and dec_msg == self.config['worker'].agents[channel].cached_message_server:
                 resp_msg = self.config['worker'].agents[channel].cache_code
                 self.setup_resp_queue_cache(resp_msg, channel)
             else:
-                self.config['worker'].agents[channel].cached_message_server = dec_msg
+                if dec_msg != 0:
+                    self.config['worker'].agents[channel].cached_message_server = dec_msg
                 self.setup_resp_queue(resp_msg, channel)
             new_tsid = "{:02x}".format(channel) + "{:06x}".format(self.config['worker'].agents[channel].init_seq)
             return str(new_tsid) + "." + str(self.config['worker'].agents[channel].bit_flip) + "." + format(
@@ -446,12 +443,13 @@ class Resolver:
         self.config['worker'].agents[channel].sending = True  # server will start replying
         full_msg = ""
         it = 0
+        if it not in self.config['worker'].agents[channel].client_msg_queue:
+            it = 1
         while it in self.config['worker'].agents[channel].client_msg_queue:
             full_msg = full_msg + self.config['worker'].agents[channel].client_msg_queue[it]
             it = it + 1
-
         bytes_object = bytes.fromhex(full_msg)
-        decoded_msg = bytes_object.decode("ASCII")
+        decoded_msg = bytes_object.decode("utf-8")
         seq = self.increment_seq(seq)
         self.config['worker'].agents[channel].renew_client_msg_queue(seq)  # restart queue
         return decoded_msg
@@ -461,7 +459,7 @@ class Resolver:
 
 
 def agent_message(msg, **kwargs):
-    global config
+    global config,loop
     try:
         response = requests.post(config['mythic_address'], data=msg,
                                  headers={"Mythic": "dns", "content-type": "text/plain"},
@@ -472,13 +470,15 @@ def agent_message(msg, **kwargs):
         except:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
+        worked = False
         try:
             decrypted_message = loop.run_until_complete(
-                MythicRPC().execute("create_decrypted_message", message=response.text, c2_profile_name="dns")).response
+            MythicRPC().execute("create_decrypted_message", message=response.text, c2_profile_name="dns")).response
             if (decrypted_message["action"] == "staging_rsa" or decrypted_message["action"] == "checkin"):
-                return {"result": response.content, "message": None}
+                if response.content != None:
+                    return {"result": response.content, "message": 0}
         except Exception as e:
-            return {"result": response.content, "message": None}
+            pass
         return {"result": response.content, "message": str(decrypted_message)}
     except Exception as e:
         print(str(e))
@@ -511,7 +511,8 @@ def overwrite_log_reply(n1, n2, n3):
 
 if __name__ == "__main__":
     sys.path.append("/Mythic/mythic")
-
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
     DNSLogger.log_recv = overwrite_log_recv
     DNSLogger.log_send = overwrite_log_send
     DNSLogger.log_request = overwrite_log_request
