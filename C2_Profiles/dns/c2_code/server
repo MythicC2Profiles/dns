@@ -17,6 +17,7 @@ import traceback
 import base64
 import uuid
 import binascii
+import secrets
 from mythic_c2_container.MythicRPC import MythicRPC
 from dnslib import TXT
 from threading import Thread, Lock
@@ -534,19 +535,24 @@ if __name__ == "__main__":
         index = 0
         instances = {}
         for inst in main_config['instances']:
+            if not 'hmac_key' in inst:
+                key = secrets.token_hex(nbytes=16)
+            else:
+                key = inst['hmac_key']
             instances[index] = {'debug': inst['debug'],
-                                'domains': inst['callback_domains'], 'key': inst['hmac_key'],
+                                'domains': inst['callback_domains'], 'key': key,
                                 'msginit': inst['msginit'],
                                 'msgdefault': inst['msgdefault']}
             if inst['debug']:
                 print("Debugging statements are enabled. This gives more context, but might be a performance hit")
             else:
                 print("Debugging statements are disabled")
-            inst['queue'] = {}
-            inst['stp'] = 0
+            main_config['instances'][index]['hmac_key'] = key
             sys.stdout.flush()
             # now to create an app instance to handle responses
             index = index + 1
+        with open("config.json","w") as conf:
+            conf.write(json.dumps(main_config,indent=2))
         resolver = Resolver(instances)
         server = DNSServer(resolver, port=53, address="0.0.0.0")
         server.start_thread()
