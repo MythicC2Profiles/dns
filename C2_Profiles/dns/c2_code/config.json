@@ -2,7 +2,6 @@
   "instances": [
     {
       "callback_domains": "domain1.com,domain2.com",
-      "hmac_key": "hmac secret key",
       "debug":"false",
       "msginit": "init",
       "msgdefault": "default"
