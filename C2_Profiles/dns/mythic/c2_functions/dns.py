@@ -61,11 +61,5 @@ class DNS(C2Profile):
             default_value="10",
             verifier_regex="^[0-9]+$",
             required=False,
-        ),
-        C2ProfileParameter(
-            name="hmac_key",
-            description="Key to verify signature of DNS queries (avoids tampering of packets in agent channel). Should be the same as the one in the profile instance ",
-            default_value="hmac secret key",
-            required=True,
-        ),
+        )
     ]
