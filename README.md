@@ -14,10 +14,11 @@ The c2 profile has `mythic_c2_container==0.0.22` PyPi package installed and repo
 
 ## How to install an agent in this format within Mythic
 
-When it's time for you to test out your install or for another user to install your agent, it's pretty simple. Within Mythic is a `install_agent_from_github.sh` script (https://github.com/its-a-feature/Mythic/blob/master/install_agent_from_github.sh). You can run this in one of two ways:
+When it's time for you to test out your install or for another user to install your c2 profile, it's pretty simple. Within Mythic you can run the `mythic-cli` binary to install this in one of three ways:
 
-* `sudo ./install_agent_from_github.sh https://github.com/user/repo` to install the main branch
-* `sudo ./install_agent_from_github.sh https://github.com/user/repo branchname` to install a specific branch of that repo
+* `sudo ./mythic-cli install github https://github.com/user/repo` to install the main branch
+* `sudo ./mythic-cli install github https://github.com/user/repo branchname` to install a specific branch of that repo
+* `sudo ./mythic-cli install folder /path/to/local/folder/cloned/from/github` to install from an already cloned down version of an agent repo
 
 Now, you might be wondering _when_ should you or a user do this to properly add your agent to their Mythic instance. There's no wrong answer here, just depends on your preference. The three options are:
 
