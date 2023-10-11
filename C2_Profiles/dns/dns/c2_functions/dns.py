@@ -1,4 +1,5 @@
-from mythic_c2_container.C2ProfileBase import *
+from mythic_container.C2ProfileBase import *
+import pathlib
 
 
 class DNS(C2Profile):
@@ -7,6 +8,8 @@ class DNS(C2Profile):
     author = "@thiagomayllart"
     is_p2p = False
     is_server_routed = False
+    server_binary_path = pathlib.Path(".") / "dns" / "c2_code" / "server"
+    server_folder_path = pathlib.Path(".") / "dns" / "c2_code"
     parameters = [
         C2ProfileParameter(
             name="callback_domains",

@@ -516,8 +516,7 @@ async def agent_message(request, **kwargs):
 
 if __name__ == "__main__":
     sys.path.append("/Mythic/mythic")
-    from mythic_c2_container.C2ProfileBase import *
-    from mythic_c2_container.MythicCallbackRPC import *
+    from mythic_container.C2ProfileBase import *
 
     config_file = open("config.json", 'rb')
     main_config = json.loads(config_file.read().decode('utf-8'))

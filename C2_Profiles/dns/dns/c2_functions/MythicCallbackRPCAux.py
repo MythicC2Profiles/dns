@@ -1,4 +1,5 @@
-from MythicBaseRPCAux import *
+#from C2_Profiles.dns.dns.c2_functions.MythicBaseRPCAux import *
+from dns.c2_functions.MythicBaseRPCAux import *
 import base64
 
 
