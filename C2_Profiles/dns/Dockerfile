@@ -1,5 +1,5 @@
 FROM itsafeaturemythic/mythic_python_base:latest
-RUN pip install dnslib
+RUN pip install dnslib requests
 
 WORKDIR /Mythic/
 
