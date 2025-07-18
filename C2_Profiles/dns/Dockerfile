@@ -1,6 +1,20 @@
-FROM itsafeaturemythic/mythic_python_base:latest
-RUN pip install dnslib requests
+FROM golang:1.23 AS builder
 
 WORKDIR /Mythic/
 
-CMD ["python3", "main.py"]
+COPY [".", "."]
+
+RUN make build
+
+FROM alpine
+
+RUN apk add make
+
+COPY --from=builder /main /main
+COPY --from=builder /mythic_dns_server /mythic_dns_server
+
+WORKDIR /Mythic/
+
+COPY [".", "."]
+
+CMD make run

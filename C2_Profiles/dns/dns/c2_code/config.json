@@ -1,12 +1,11 @@
 {
   "instances": [
     {
-      "domains": "domain1.com,domain2.com",
-      "key": "hmac secret key",
-      "debug":"false",
-      "msginit": "init",
-      "msgdefault": "default"
+      "port": 53,
+      "debug": false,
+      "bind_ip": "0.0.0.0",
+      "domains": [
+      ]
     }
   ]
 }
-
