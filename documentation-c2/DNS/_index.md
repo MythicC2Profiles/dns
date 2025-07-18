@@ -28,7 +28,7 @@ message DnsPacket {
 Agents will put a chunk of their normal base64 message in the "Data" field; this message is then marshalled and converted to base32 format (without padding). 
 This resulting base32 message is what gets sent via a DNS Query message to the Mythic server.
 
-Each request gets a reply with 4 answers in this order:
+Each request gets a reply with 4 answers with the following order (indicated by the TTL for the Answer):
 1. AgentSessionID
 2. MessageID
 3. Begin Byte Number

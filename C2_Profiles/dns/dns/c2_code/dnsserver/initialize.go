@@ -72,14 +72,20 @@ func (s *DnsServer) ListenAndServe() error {
 	return s.server.ListenAndServe()
 }
 func (s *DnsServer) getParentDomain(reqDomain string) string {
+	longestParent := ""
 	for _, parentDomain := range s.domains {
 		if dns.IsSubDomain(parentDomain+".", reqDomain) {
 			//logging.LogInfo("found parent domain", "parent", parentDomain)
-			return parentDomain + "."
+			if len(parentDomain) > len(longestParent) {
+				longestParent = parentDomain
+			}
 		}
 	}
-	logging.LogError(nil, "Got request with parent domain not tracked", "reqDomain", reqDomain)
-	return ""
+	if longestParent == "" {
+		logging.LogError(nil, "Got request with parent domain not tracked", "reqDomain", reqDomain)
+		return ""
+	}
+	return longestParent + "."
 }
 func (s *DnsServer) HandleDNSRequest(writer dns.ResponseWriter, req *dns.Msg) {
 	if req == nil {
@@ -106,7 +112,7 @@ func (s *DnsServer) handleMessage(domain string, req *dns.Msg) *dns.Msg {
 	//logging.LogInfo("processing req", "sub domain", subdomain, "domain", domain)
 	msg, err := s.parseData(subdomain)
 	if err != nil {
-		logging.LogError(err, "failed to process message as a Mythic DNS message, returning generic name error")
+		logging.LogError(err, "failed to process message as a Mythic DNS message, returning generic name error", "message", subdomain)
 		return s.nameErrorResp(req, dns.RcodeNameError)
 	}
 	// Msg Type -> Handler
@@ -141,6 +147,7 @@ func (s *DnsServer) AgentToServer(domain string, msg *dnsgrpc.DnsPacket, req *dn
 	dnsConnection := s.GetConnection(msg)
 	respAction := dnsConnection.AddIncomingMessage(msg)
 	resp := new(dns.Msg)
+	resp.Authoritative = true
 	s.ackPacket(resp, msg, req, domain)
 	s.addResponseAction(resp, msg, req, domain, respAction)
 	return resp
@@ -228,10 +235,10 @@ func (s *DnsServer) AddPacketToResponse(msg *dnsgrpc.DnsPacket, responsePacket *
 		case dns.TypeA:
 			resp.Authoritative = true
 			chunks := getChunks(msgToSend, 4)
-			for _, chunk := range chunks {
+			for i, chunk := range chunks {
 				resp.Answer = append(resp.Answer,
 					&dns.A{
-						Hdr: dns.RR_Header{Name: domain, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: s.TTL},
+						Hdr: dns.RR_Header{Name: q.Name, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: uint32(4 + i)},
 						A:   chunk,
 					},
 				)
@@ -239,10 +246,10 @@ func (s *DnsServer) AddPacketToResponse(msg *dnsgrpc.DnsPacket, responsePacket *
 		case dns.TypeAAAA:
 			resp.Authoritative = true
 			chunks := getChunks(msgToSend, 16)
-			for _, chunk := range chunks {
+			for i, chunk := range chunks {
 				resp.Answer = append(resp.Answer,
 					&dns.AAAA{
-						Hdr:  dns.RR_Header{Name: domain, Rrtype: dns.TypeAAAA, Class: dns.ClassINET, Ttl: s.TTL},
+						Hdr:  dns.RR_Header{Name: q.Name, Rrtype: dns.TypeAAAA, Class: dns.ClassINET, Ttl: uint32(4 + i)},
 						AAAA: chunk,
 					},
 				)
@@ -252,7 +259,7 @@ func (s *DnsServer) AddPacketToResponse(msg *dnsgrpc.DnsPacket, responsePacket *
 			chunks := getTxtChunks([]byte(base64.StdEncoding.EncodeToString(msgToSend)))
 			resp.Answer = append(resp.Answer,
 				&dns.TXT{
-					Hdr: dns.RR_Header{Name: domain, Rrtype: dns.TypeTXT, Class: dns.ClassINET, Ttl: s.TTL},
+					Hdr: dns.RR_Header{Name: q.Name, Rrtype: dns.TypeTXT, Class: dns.ClassINET, Ttl: 4},
 					Txt: chunks,
 				},
 			)
@@ -275,15 +282,15 @@ func (s *DnsServer) ackPacket(resp *dns.Msg, msg *dnsgrpc.DnsPacket, req *dns.Ms
 			// resp.RecursionAvailable = complete
 			resp.Answer = append(resp.Answer,
 				&dns.A{
-					Hdr: dns.RR_Header{Name: domain, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: s.TTL},
+					Hdr: dns.RR_Header{Name: q.Name, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 0},
 					A:   AgentSessionID,
 				},
 				&dns.A{
-					Hdr: dns.RR_Header{Name: domain, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: s.TTL},
+					Hdr: dns.RR_Header{Name: q.Name, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 1},
 					A:   messageIDRespBuf,
 				},
 				&dns.A{
-					Hdr: dns.RR_Header{Name: domain, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: s.TTL},
+					Hdr: dns.RR_Header{Name: q.Name, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 2},
 					A:   messageStartRespBuf,
 				},
 			)
@@ -298,15 +305,15 @@ func (s *DnsServer) ackPacket(resp *dns.Msg, msg *dnsgrpc.DnsPacket, req *dns.Ms
 			// resp.RecursionAvailable = complete
 			resp.Answer = append(resp.Answer,
 				&dns.AAAA{
-					Hdr:  dns.RR_Header{Name: domain, Rrtype: dns.TypeAAAA, Class: dns.ClassINET, Ttl: s.TTL},
+					Hdr:  dns.RR_Header{Name: q.Name, Rrtype: dns.TypeAAAA, Class: dns.ClassINET, Ttl: 0},
 					AAAA: AgentSessionID,
 				},
 				&dns.AAAA{
-					Hdr:  dns.RR_Header{Name: domain, Rrtype: dns.TypeAAAA, Class: dns.ClassINET, Ttl: s.TTL},
+					Hdr:  dns.RR_Header{Name: q.Name, Rrtype: dns.TypeAAAA, Class: dns.ClassINET, Ttl: 1},
 					AAAA: messageIDRespBuf,
 				},
 				&dns.AAAA{
-					Hdr:  dns.RR_Header{Name: domain, Rrtype: dns.TypeAAAA, Class: dns.ClassINET, Ttl: s.TTL},
+					Hdr:  dns.RR_Header{Name: q.Name, Rrtype: dns.TypeAAAA, Class: dns.ClassINET, Ttl: 2},
 					AAAA: messageStartRespBuf,
 				},
 			)
@@ -315,19 +322,19 @@ func (s *DnsServer) ackPacket(resp *dns.Msg, msg *dnsgrpc.DnsPacket, req *dns.Ms
 			resp.Authoritative = true
 			resp.Answer = append(resp.Answer,
 				&dns.TXT{
-					Hdr: dns.RR_Header{Name: domain, Rrtype: dns.TypeTXT, Class: dns.ClassINET, Ttl: s.TTL},
+					Hdr: dns.RR_Header{Name: q.Name, Rrtype: dns.TypeTXT, Class: dns.ClassINET, Ttl: 0},
 					Txt: []string{
 						fmt.Sprintf("%v", msg.AgentSessionID),
 					},
 				},
 				&dns.TXT{
-					Hdr: dns.RR_Header{Name: domain, Rrtype: dns.TypeTXT, Class: dns.ClassINET, Ttl: s.TTL},
+					Hdr: dns.RR_Header{Name: q.Name, Rrtype: dns.TypeTXT, Class: dns.ClassINET, Ttl: 1},
 					Txt: []string{
 						fmt.Sprintf("%v", msg.MessageID),
 					},
 				},
 				&dns.TXT{
-					Hdr: dns.RR_Header{Name: domain, Rrtype: dns.TypeTXT, Class: dns.ClassINET, Ttl: s.TTL},
+					Hdr: dns.RR_Header{Name: q.Name, Rrtype: dns.TypeTXT, Class: dns.ClassINET, Ttl: 2},
 					Txt: []string{
 						fmt.Sprintf("%v", msg.Begin),
 					},
@@ -347,7 +354,7 @@ func (s *DnsServer) addResponseAction(resp *dns.Msg, msg *dnsgrpc.DnsPacket, req
 			// resp.RecursionAvailable = complete
 			resp.Answer = append(resp.Answer,
 				&dns.A{
-					Hdr: dns.RR_Header{Name: domain, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: s.TTL},
+					Hdr: dns.RR_Header{Name: q.Name, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 3},
 					A:   actionRespBuf,
 				},
 			)
@@ -358,7 +365,7 @@ func (s *DnsServer) addResponseAction(resp *dns.Msg, msg *dnsgrpc.DnsPacket, req
 			// resp.RecursionAvailable = complete
 			resp.Answer = append(resp.Answer,
 				&dns.AAAA{
-					Hdr:  dns.RR_Header{Name: domain, Rrtype: dns.TypeAAAA, Class: dns.ClassINET, Ttl: s.TTL},
+					Hdr:  dns.RR_Header{Name: q.Name, Rrtype: dns.TypeAAAA, Class: dns.ClassINET, Ttl: 3},
 					AAAA: actionRespBuf,
 				},
 			)
@@ -366,7 +373,7 @@ func (s *DnsServer) addResponseAction(resp *dns.Msg, msg *dnsgrpc.DnsPacket, req
 			resp.Authoritative = true
 			resp.Answer = append(resp.Answer,
 				&dns.TXT{
-					Hdr: dns.RR_Header{Name: domain, Rrtype: dns.TypeTXT, Class: dns.ClassINET, Ttl: s.TTL},
+					Hdr: dns.RR_Header{Name: q.Name, Rrtype: dns.TypeTXT, Class: dns.ClassINET, Ttl: 3},
 					Txt: []string{
 						fmt.Sprintf("%v", action),
 					},
@@ -392,7 +399,7 @@ func (s *DnsServer) parseData(subdomain string) (*dnsgrpc.DnsPacket, error) {
 	msg := &dnsgrpc.DnsPacket{}
 	err = proto.Unmarshal(data, msg)
 	if err != nil {
-		logging.LogError(err, "failed to unmarshal data")
+		logging.LogError(err, "failed to unmarshal data", "data", data)
 		return nil, err
 	}
 	//logging.LogInfo("got msg", "msg", msg)
