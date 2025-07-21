@@ -10,6 +10,7 @@ import (
 	mythicConfig "github.com/MythicMeta/MythicContainer/config"
 	"github.com/MythicMeta/MythicContainer/logging"
 	"github.com/golang/protobuf/proto"
+	"github.com/google/uuid"
 	"github.com/miekg/dns"
 	"io"
 	"mythicDNS/dnsserver/dnsgrpc"
@@ -49,6 +50,9 @@ type DnsConnection struct {
 	incomingMessages map[uint32]*DnsMessageStream
 	incomingMutex    *sync.Mutex
 }
+
+var AgentIDToMythicIDMap = make(map[uint32]string)
+var AgentIDToMythicIDLock sync.Mutex
 
 func Initialize(configInstance instanceConfig) *DnsServer {
 	server := &DnsServer{
@@ -456,6 +460,7 @@ func (con *DnsConnection) AddIncomingMessage(msg *dnsgrpc.DnsPacket) dnsgrpc.Act
 		delete(con.incomingMessages, msg.MessageID)
 		// send this totalBuffer off to Mythic for processing
 		logging.LogInfo("sending full message to mythic", "message id", msg.MessageID, "agent session id", msg.AgentSessionID)
+		go con.UpdateMythicIDTracking(msg.AgentSessionID, []byte(totalBuffer))
 		requestURL := fmt.Sprintf("http://%s:%d/agent_message", mythicConfig.MythicConfig.MythicServerHost, mythicConfig.MythicConfig.MythicServerPort)
 		req, err := http.NewRequest("POST", requestURL, bytes.NewBuffer([]byte(totalBuffer)))
 		if err != nil {
@@ -480,4 +485,27 @@ func (con *DnsConnection) AddIncomingMessage(msg *dnsgrpc.DnsPacket) dnsgrpc.Act
 		return dnsgrpc.Actions_ServerToAgent
 	}
 	return msg.Action
+}
+func (con *DnsConnection) UpdateMythicIDTracking(AgentSessionID uint32, MythicMessage []byte) {
+	AgentIDToMythicIDLock.Lock()
+	defer AgentIDToMythicIDLock.Unlock()
+	if _, ok := AgentIDToMythicIDMap[AgentSessionID]; ok {
+		return
+	}
+	decodedBytes, err := base64.StdEncoding.DecodeString(string(MythicMessage))
+	if err != nil {
+		logging.LogError(err, "failed to decode Mythic message")
+		return
+	}
+	if len(decodedBytes) > 40 {
+		callbackUUID, err := uuid.Parse(string(decodedBytes[:36]))
+		if err != nil {
+			logging.LogError(err, "failed to parse callback UUID")
+			return
+		}
+		AgentIDToMythicIDMap[AgentSessionID] = callbackUUID.String()
+	}
+}
+func (con *DnsConnection) UpdateMythicInbound(MessageID uint32) {
+
 }

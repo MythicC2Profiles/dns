@@ -41,7 +41,7 @@ func writeC2JsonConfig(cfg *config) error {
 	return os.WriteFile(filepath.Join(".", "dns", "c2_code", "config.json"), jsonBytes, 644)
 }
 
-var version = "0.0.1"
+var version = "0.0.2"
 var dnsc2definition = c2structs.C2Profile{
 	Name:             "dns",
 	Author:           "@its_a_feature_",
