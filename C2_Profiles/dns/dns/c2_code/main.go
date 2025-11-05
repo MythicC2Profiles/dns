@@ -1,8 +1,10 @@
 package main
 
 import (
-	"github.com/MythicMeta/MythicContainer/logging"
 	"mythicDNS/dnsserver"
+	"os"
+
+	"github.com/MythicMeta/MythicContainer/logging"
 )
 
 func main() {
@@ -16,6 +18,7 @@ func main() {
 			err := server.ListenAndServe()
 			if err != nil {
 				logging.LogError(err, "stopped listening", "server", instance)
+				os.Exit(1)
 			}
 		}()
 	}

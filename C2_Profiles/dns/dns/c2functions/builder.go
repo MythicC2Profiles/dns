@@ -3,11 +3,12 @@ package c2functions
 import (
 	"encoding/json"
 	"fmt"
-	c2structs "github.com/MythicMeta/MythicContainer/c2_structs"
-	"github.com/MythicMeta/MythicContainer/logging"
 	"os"
 	"path/filepath"
 	"slices"
+
+	c2structs "github.com/MythicMeta/MythicContainer/c2_structs"
+	"github.com/MythicMeta/MythicContainer/logging"
 )
 
 type config struct {
@@ -41,7 +42,7 @@ func writeC2JsonConfig(cfg *config) error {
 	return os.WriteFile(filepath.Join(".", "dns", "c2_code", "config.json"), jsonBytes, 644)
 }
 
-var version = "0.0.2"
+var version = "0.0.3"
 var dnsc2definition = c2structs.C2Profile{
 	Name:             "dns",
 	Author:           "@its_a_feature_",

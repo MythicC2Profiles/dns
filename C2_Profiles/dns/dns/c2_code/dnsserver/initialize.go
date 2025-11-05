@@ -7,11 +7,6 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"fmt"
-	mythicConfig "github.com/MythicMeta/MythicContainer/config"
-	"github.com/MythicMeta/MythicContainer/logging"
-	"github.com/golang/protobuf/proto"
-	"github.com/google/uuid"
-	"github.com/miekg/dns"
 	"io"
 	"mythicDNS/dnsserver/dnsgrpc"
 	"net"
@@ -21,6 +16,12 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	mythicConfig "github.com/MythicMeta/MythicContainer/config"
+	"github.com/MythicMeta/MythicContainer/logging"
+	"github.com/golang/protobuf/proto"
+	"github.com/google/uuid"
+	"github.com/miekg/dns"
 )
 
 type DnsServer struct {
@@ -112,6 +113,10 @@ func (s *DnsServer) HandleDNSRequest(writer dns.ResponseWriter, req *dns.Msg) {
 	}
 }
 func (s *DnsServer) handleMessage(domain string, req *dns.Msg) *dns.Msg {
+	if len(req.Question[0].Name) == len(domain) {
+		logging.LogError(nil, "no subdomain data given")
+		return s.nameErrorResp(req, dns.RcodeNameError)
+	}
 	subdomain := req.Question[0].Name[:len(req.Question[0].Name)-len(domain)-1]
 	//logging.LogInfo("processing req", "sub domain", subdomain, "domain", domain)
 	msg, err := s.parseData(subdomain)
