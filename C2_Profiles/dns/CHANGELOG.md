@@ -1,3 +1,10 @@
+
+## [v0.0.4] - 2025-11-05
+
+### Changed
+
+- Updated DNS processing to be a bit more resilient to replicated queries before deleting tracking
+
 ## [v0.0.3] - 2025-11-05
 
 ### Changed

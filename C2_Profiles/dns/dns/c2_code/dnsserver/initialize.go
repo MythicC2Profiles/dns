@@ -44,9 +44,10 @@ type DnsMessageStream struct {
 
 // DnsConnection tracks all the messages in/out for a callback/payload
 type DnsConnection struct {
-	outgoingMsgIDs  []uint32
-	outgoingBuffers map[uint32][]byte
-	outgoingMutex   *sync.RWMutex
+	outgoingMsgIDs        []uint32
+	outgoingBuffers       map[uint32][]byte
+	outgoingMsgIDsToClear []uint32
+	outgoingMutex         *sync.RWMutex
 
 	incomingMessages map[uint32]*DnsMessageStream
 	incomingMutex    *sync.Mutex
@@ -197,13 +198,24 @@ func (s *DnsServer) ServerToAgent(domain string, msg *dnsgrpc.DnsPacket, req *dn
 	}
 	s.AddPacketToResponse(msg, responsePacket, resp, req, domain)
 	if finishedMessage {
-		delete(dnsConnection.outgoingBuffers, msg.MessageID)
-		msgIndex := slices.Index(dnsConnection.outgoingMsgIDs, msg.MessageID)
-		endIndex := msgIndex + 1
-		if endIndex > len(dnsConnection.outgoingMsgIDs) {
-			endIndex = len(dnsConnection.outgoingMsgIDs)
+		if slices.Contains(dnsConnection.outgoingMsgIDsToClear, msg.MessageID) {
+			//logging.LogInfo("finished sending message again", "message id", msg.MessageID)
+			return resp
 		}
-		dnsConnection.outgoingMsgIDs = slices.Delete(dnsConnection.outgoingMsgIDs, msgIndex, endIndex)
+		logging.LogInfo("finished sending message", "message id", msg.MessageID)
+		if len(dnsConnection.outgoingMsgIDsToClear) > 0 {
+			priorMessageID := dnsConnection.outgoingMsgIDsToClear[0]
+			//logging.LogInfo("finished message, removing prior buffer", "message id", priorMessageID)
+			delete(dnsConnection.outgoingBuffers, priorMessageID)
+			msgIndex := slices.Index(dnsConnection.outgoingMsgIDs, priorMessageID)
+			endIndex := msgIndex + 1
+			if endIndex > len(dnsConnection.outgoingMsgIDs) {
+				endIndex = len(dnsConnection.outgoingMsgIDs)
+			}
+			dnsConnection.outgoingMsgIDs = slices.Delete(dnsConnection.outgoingMsgIDs, msgIndex, endIndex)
+			dnsConnection.outgoingMsgIDsToClear = dnsConnection.outgoingMsgIDsToClear[1:]
+		}
+		dnsConnection.outgoingMsgIDsToClear = append(dnsConnection.outgoingMsgIDsToClear, msg.MessageID)
 	}
 	//logging.LogInfo("added response to reply", "resp", resp)
 	return resp
@@ -485,6 +497,7 @@ func (con *DnsConnection) AddIncomingMessage(msg *dnsgrpc.DnsPacket) dnsgrpc.Act
 			return dnsgrpc.Actions_ReTransmit
 		}
 		// add the response to the outgoing buffers for the agent to pick up next
+		//logging.LogInfo("received response from server", "body", body)
 		con.outgoingBuffers[msg.MessageID] = body
 		con.outgoingMsgIDs = append(con.outgoingMsgIDs, msg.MessageID)
 		return dnsgrpc.Actions_ServerToAgent
