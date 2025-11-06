@@ -7,7 +7,21 @@ weight = 5
 ## Overview
 This C2 Profile uses DNS requests to communicate between the agent and the C2 container, where messages are aggregated and forwarded to the Mythic API.
 The DNS Requests use a format similar to the Sliver C2 Framework's DNS C2 (https://github.com/BishopFox/sliver/blob/master/server/c2/dns.go) and (https://sliver.sh/docs?name=DNS+C2).
-However, Mythic's version is a bit different and slightly less complex (this is subject to change as this is currently in beta). To provide metadata about message transfers and ordering while still minimizing space, Mythic's DNS uses the following protobuf:
+However, Mythic's version is a bit different and slightly less complex (this is subject to change as this is currently in beta). 
+
+To configure DNS properly, you'll want a setup like the following:
+
+If your DNS name is `mydomain.com`, then you'll configure DNS with the following three entries:
+
+* Type: A Record, Host: `ns1`, Value: IP address of where Mythic's DNS C2 Profile is running or redirector that'll forward DNS traffic
+* Type: A Record, Host: `mydomain.com`, Value: same as above
+* Type: NS Record, Host: `dns`, Value: `ns1.mydomain.com.` (note the trailing `.`, it might get auto-added by your provider)
+  * This `host` value can be whatever you want and will be the main subdomain for your DNS traffic. Naturally, the longer this is the less room you have for messages.
+
+When building your payload, you'd configure your domain as `dns.mydomain.com`. The comms will then be in the format of `[stuff].dns.mydomain.com`. 
+
+
+To provide metadata about message transfers and ordering while still minimizing space, Mythic's DNS uses the following protobuf:
 ```protobuf
 syntax = "proto3";
 enum Actions {
