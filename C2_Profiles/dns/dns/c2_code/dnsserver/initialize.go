@@ -345,19 +345,19 @@ func (s *DnsServer) ackPacket(resp *dns.Msg, msg *dnsgrpc.DnsPacket, req *dns.Ms
 				&dns.TXT{
 					Hdr: dns.RR_Header{Name: q.Name, Rrtype: dns.TypeTXT, Class: dns.ClassINET, Ttl: 0},
 					Txt: []string{
-						fmt.Sprintf("%v", msg.AgentSessionID),
+						fmt.Sprintf("%d", msg.AgentSessionID),
 					},
 				},
 				&dns.TXT{
 					Hdr: dns.RR_Header{Name: q.Name, Rrtype: dns.TypeTXT, Class: dns.ClassINET, Ttl: 1},
 					Txt: []string{
-						fmt.Sprintf("%v", msg.MessageID),
+						fmt.Sprintf("%d", msg.MessageID),
 					},
 				},
 				&dns.TXT{
 					Hdr: dns.RR_Header{Name: q.Name, Rrtype: dns.TypeTXT, Class: dns.ClassINET, Ttl: 2},
 					Txt: []string{
-						fmt.Sprintf("%v", msg.Begin),
+						fmt.Sprintf("%d", msg.Begin),
 					},
 				})
 		}
@@ -396,7 +396,7 @@ func (s *DnsServer) addResponseAction(resp *dns.Msg, msg *dnsgrpc.DnsPacket, req
 				&dns.TXT{
 					Hdr: dns.RR_Header{Name: q.Name, Rrtype: dns.TypeTXT, Class: dns.ClassINET, Ttl: 3},
 					Txt: []string{
-						fmt.Sprintf("%v", action),
+						fmt.Sprintf("%d", action),
 					},
 				})
 		}

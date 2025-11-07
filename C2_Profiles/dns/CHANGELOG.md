@@ -1,4 +1,10 @@
 
+## [v0.0.5] - 2025-11-07
+
+### Changed
+
+- Updated TXT response for action to be an enum value and not the string representation
+
 ## [v0.0.4] - 2025-11-05
 
 ### Changed
