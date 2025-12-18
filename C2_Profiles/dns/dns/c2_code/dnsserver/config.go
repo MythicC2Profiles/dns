@@ -2,10 +2,11 @@ package dnsserver
 
 import (
 	"encoding/json"
-	"github.com/MythicMeta/MythicContainer/logging"
 	"log"
 	"os"
 	"path/filepath"
+
+	"github.com/MythicMeta/MythicContainer/logging"
 )
 
 type config struct {

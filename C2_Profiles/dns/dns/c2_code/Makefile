@@ -5,6 +5,8 @@ BINARY_NAME?=mythic_dns_server
 DEBUG_LEVEL?="debug"
 MYTHIC_SERVER_HOST?="127.0.0.1"
 MYTHIC_SERVER_PORT?="17443"
+RABBITMQ_HOST?="127.0.0.1"
+RABBITMQ_PASSWORD?="PqR9XJ957sfHqcxj6FsBMj4p"
 
 build_protobuf_go:
 	protoc --go_out=`pwd`/dnsserver/dnsgrpc --go_opt=paths=source_relative \
@@ -29,4 +31,6 @@ run_custom: build_local
 	DEBUG_LEVEL=${DEBUG_LEVEL} \
 MYTHIC_SERVER_HOST=${MYTHIC_SERVER_HOST} \
 MYTHIC_SERVER_PORT=${MYTHIC_SERVER_PORT} \
+RABBITMQ_HOST=${RABBITMQ_HOST} \
+RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD} \
 ./${BINARY_NAME}

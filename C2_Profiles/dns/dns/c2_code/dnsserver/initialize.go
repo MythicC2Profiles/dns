@@ -5,7 +5,6 @@ import (
 	"crypto/tls"
 	"encoding/base32"
 	"encoding/base64"
-	"encoding/binary"
 	"fmt"
 	"io"
 	"mythicDNS/dnsserver/dnsgrpc"
@@ -19,6 +18,7 @@ import (
 
 	mythicConfig "github.com/MythicMeta/MythicContainer/config"
 	"github.com/MythicMeta/MythicContainer/logging"
+	"github.com/MythicMeta/MythicContainer/mythicrpc"
 	"github.com/golang/protobuf/proto"
 	"github.com/google/uuid"
 	"github.com/miekg/dns"
@@ -52,9 +52,15 @@ type DnsConnection struct {
 	incomingMessages map[uint32]*DnsMessageStream
 	incomingMutex    *sync.Mutex
 }
+type AgentMessageMythicUITracking struct {
+	AgentCallbackID string `json:"agentCallbackId"`
+	ExtraInfo       string `json:"extraInfo"`
+	LastUpdateTime  time.Time
+	PerformedUpdate bool
+}
 
-var AgentIDToMythicIDMap = make(map[uint32]string)
-var AgentIDToMythicIDLock sync.Mutex
+var AgentIDToMythicIDMap = make(map[uint32]AgentMessageMythicUITracking)
+var AgentIDToMythicIDLock sync.RWMutex
 
 func Initialize(configInstance instanceConfig) *DnsServer {
 	server := &DnsServer{
@@ -104,10 +110,11 @@ func (s *DnsServer) HandleDNSRequest(writer dns.ResponseWriter, req *dns.Msg) {
 	//logging.LogInfo("got dns request", "question", req.Question, "name", req.Question[0].Name)
 	domain := s.getParentDomain(req.Question[0].Name)
 	if domain == "" {
-		logging.LogError(nil, "Not a tracked domain", "domain", domain)
+		logging.LogError(nil, "Not a tracked domain", "domain", req.Question[0].Name)
 		return
 	}
 	resp := s.handleMessage(domain, req)
+	//logging.LogInfo("sending final message back", "response", resp)
 	err := writer.WriteMsg(resp)
 	if err != nil {
 		logging.LogError(err, "Failed to write response", "domain", domain)
@@ -158,15 +165,14 @@ func (s *DnsServer) AgentToServer(domain string, msg *dnsgrpc.DnsPacket, req *dn
 	respAction := dnsConnection.AddIncomingMessage(msg)
 	resp := new(dns.Msg)
 	resp.Authoritative = true
-	s.ackPacket(resp, msg, req, domain)
 	s.addResponseAction(resp, msg, req, domain, respAction)
+	dnsConnection.UpdateTransferStatus(msg.AgentSessionID, msg.Action, msg.Begin, msg.Size)
 	return resp
 }
 func (s *DnsServer) ServerToAgent(domain string, msg *dnsgrpc.DnsPacket, req *dns.Msg) *dns.Msg {
 	//logging.LogInfo("got message from CheckForMessage", "msg", msg)
 	dnsConnection := s.GetConnection(msg)
 	resp := new(dns.Msg)
-	s.ackPacket(resp, msg, req, domain)
 
 	dnsConnection.outgoingMutex.Lock()
 	defer dnsConnection.outgoingMutex.Unlock()
@@ -178,9 +184,13 @@ func (s *DnsServer) ServerToAgent(domain string, msg *dnsgrpc.DnsPacket, req *dn
 	s.addResponseAction(resp, msg, req, domain, dnsgrpc.Actions_ServerToAgent)
 	finishedMessage := false
 	size := uint32(len(dnsConnection.outgoingBuffers[msg.MessageID]))
-	end := msg.Begin + 128
-	if req.Question[0].Qtype == dns.TypeTXT {
-		end = msg.Begin + 10000 // arbitrary 10k instead of 128 Bytes per response
+	end := msg.Begin
+	if req.Question[0].Qtype == dns.TypeA {
+		end += 128 // in TypeA, need 1B for order, 3B for data per Answer. 1 Answer for Action
+	} else if req.Question[0].Qtype == dns.TypeAAAA {
+		end += 630 // in TypeAAAA, need 1B for order, 15 for data per Answer. 1 Answer for Action
+	} else if req.Question[0].Qtype == dns.TypeTXT {
+		end += 1000 // arbitrary 1k instead of 128 Bytes per response
 	}
 	if end >= size {
 		end = size
@@ -194,12 +204,13 @@ func (s *DnsServer) ServerToAgent(domain string, msg *dnsgrpc.DnsPacket, req *dn
 		MessageID:      msg.MessageID,
 		Size:           size,
 		Begin:          msg.Begin,
-		Data:           string(chunk),
+		Data:           chunk,
 	}
 	s.AddPacketToResponse(msg, responsePacket, resp, req, domain)
+	dnsConnection.UpdateTransferStatus(responsePacket.AgentSessionID, responsePacket.Action, responsePacket.Begin, responsePacket.Size)
 	if finishedMessage {
 		if slices.Contains(dnsConnection.outgoingMsgIDsToClear, msg.MessageID) {
-			//logging.LogInfo("finished sending message again", "message id", msg.MessageID)
+			logging.LogInfo("finished sending message again", "message id", msg.MessageID, "chunk", chunk)
 			return resp
 		}
 		logging.LogInfo("finished sending message", "message id", msg.MessageID)
@@ -222,14 +233,35 @@ func (s *DnsServer) ServerToAgent(domain string, msg *dnsgrpc.DnsPacket, req *dn
 }
 func getChunks(data []byte, chunkSize int) [][]byte {
 	chunks := make([][]byte, 0)
+	index := 0
+	remaining := chunkSize
+	endReached := false
 	for i := 0; i < len(data); i += chunkSize {
 		end := i + chunkSize
 		if end > len(data) {
+			endReached = true
+			remaining = end - len(data) // how many extra bytes there are
 			end = len(data)
 		}
-		chunk := make([]byte, chunkSize)
-		copy(chunk, data[i:end])
+		chunk := make([]byte, chunkSize+1)
+		copy(chunk[1:], data[i:end])
+		chunk[0] = byte(index + 1)
+		if endReached {
+			for j := len(chunk) - 1; j > chunkSize-remaining; j-- {
+				chunk[j] = uint8(remaining)
+			}
+		}
+		//logging.LogInfo("adding chunk", "chunk[0]", chunk[0])
 		chunks = append(chunks, chunk)
+		if !endReached && i+chunkSize >= len(data) {
+			chunkPadding := make([]byte, chunkSize+1)
+			for j := 1; j <= chunkSize; j++ {
+				chunkPadding[j] = byte(remaining)
+			}
+			chunkPadding[0] = byte(index + 2)
+			chunks = append(chunks, chunkPadding)
+		}
+		index++
 	}
 	return chunks
 }
@@ -254,147 +286,63 @@ func (s *DnsServer) AddPacketToResponse(msg *dnsgrpc.DnsPacket, responsePacket *
 	for _, q := range req.Question {
 		switch q.Qtype {
 		case dns.TypeA:
-			resp.Authoritative = true
-			chunks := getChunks(msgToSend, 4)
-			for i, chunk := range chunks {
+			chunks := getChunks(msgToSend, net.IPv4len-1)
+			for _, chunk := range chunks {
 				resp.Answer = append(resp.Answer,
 					&dns.A{
-						Hdr: dns.RR_Header{Name: q.Name, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: uint32(4 + i)},
+						Hdr: dns.RR_Header{Name: q.Name, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 0},
 						A:   chunk,
 					},
 				)
 			}
 		case dns.TypeAAAA:
-			resp.Authoritative = true
-			chunks := getChunks(msgToSend, 16)
-			for i, chunk := range chunks {
+			chunks := getChunks(msgToSend, net.IPv6len-1)
+			for _, chunk := range chunks {
 				resp.Answer = append(resp.Answer,
 					&dns.AAAA{
-						Hdr:  dns.RR_Header{Name: q.Name, Rrtype: dns.TypeAAAA, Class: dns.ClassINET, Ttl: uint32(4 + i)},
+						Hdr:  dns.RR_Header{Name: q.Name, Rrtype: dns.TypeAAAA, Class: dns.ClassINET, Ttl: 0},
 						AAAA: chunk,
 					},
 				)
 			}
 		case dns.TypeTXT:
-			resp.Authoritative = true
 			chunks := getTxtChunks([]byte(base64.StdEncoding.EncodeToString(msgToSend)))
 			resp.Answer = append(resp.Answer,
 				&dns.TXT{
-					Hdr: dns.RR_Header{Name: q.Name, Rrtype: dns.TypeTXT, Class: dns.ClassINET, Ttl: 4},
+					Hdr: dns.RR_Header{Name: q.Name, Rrtype: dns.TypeTXT, Class: dns.ClassINET, Ttl: 0},
 					Txt: chunks,
 				},
 			)
 		}
 	}
 }
-func (s *DnsServer) ackPacket(resp *dns.Msg, msg *dnsgrpc.DnsPacket, req *dns.Msg, domain string) {
+func (s *DnsServer) addResponseAction(resp *dns.Msg, msg *dnsgrpc.DnsPacket, req *dns.Msg, domain string, action dnsgrpc.Actions) {
 	resp = resp.SetReply(req)
-
+	resp.Authoritative = true
 	for _, q := range req.Question {
 		switch q.Qtype {
 		case dns.TypeA:
-			AgentSessionID := make([]byte, net.IPv4len)
-			binary.LittleEndian.PutUint32(AgentSessionID, msg.AgentSessionID)
-			messageIDRespBuf := make([]byte, net.IPv4len)
-			binary.LittleEndian.PutUint32(messageIDRespBuf, msg.MessageID)
-			messageStartRespBuf := make([]byte, net.IPv4len)
-			binary.LittleEndian.PutUint32(messageStartRespBuf, msg.Begin)
-			resp.Authoritative = true
-			// resp.RecursionAvailable = complete
+			actionRespBuf := make([]byte, net.IPv4len)
+			actionRespBuf[net.IPv4len-1] = byte(action)
 			resp.Answer = append(resp.Answer,
 				&dns.A{
 					Hdr: dns.RR_Header{Name: q.Name, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 0},
-					A:   AgentSessionID,
-				},
-				&dns.A{
-					Hdr: dns.RR_Header{Name: q.Name, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 1},
-					A:   messageIDRespBuf,
-				},
-				&dns.A{
-					Hdr: dns.RR_Header{Name: q.Name, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 2},
-					A:   messageStartRespBuf,
-				},
-			)
-		case dns.TypeAAAA:
-			resp.Authoritative = true
-			AgentSessionID := make([]byte, net.IPv6len)
-			binary.LittleEndian.PutUint32(AgentSessionID, msg.AgentSessionID)
-			messageIDRespBuf := make([]byte, net.IPv6len)
-			binary.LittleEndian.PutUint32(messageIDRespBuf, msg.MessageID)
-			messageStartRespBuf := make([]byte, net.IPv6len)
-			binary.LittleEndian.PutUint32(messageStartRespBuf, msg.Begin)
-			// resp.RecursionAvailable = complete
-			resp.Answer = append(resp.Answer,
-				&dns.AAAA{
-					Hdr:  dns.RR_Header{Name: q.Name, Rrtype: dns.TypeAAAA, Class: dns.ClassINET, Ttl: 0},
-					AAAA: AgentSessionID,
-				},
-				&dns.AAAA{
-					Hdr:  dns.RR_Header{Name: q.Name, Rrtype: dns.TypeAAAA, Class: dns.ClassINET, Ttl: 1},
-					AAAA: messageIDRespBuf,
-				},
-				&dns.AAAA{
-					Hdr:  dns.RR_Header{Name: q.Name, Rrtype: dns.TypeAAAA, Class: dns.ClassINET, Ttl: 2},
-					AAAA: messageStartRespBuf,
-				},
-			)
-		case dns.TypeTXT:
-			// 255 max characters per string
-			resp.Authoritative = true
-			resp.Answer = append(resp.Answer,
-				&dns.TXT{
-					Hdr: dns.RR_Header{Name: q.Name, Rrtype: dns.TypeTXT, Class: dns.ClassINET, Ttl: 0},
-					Txt: []string{
-						fmt.Sprintf("%d", msg.AgentSessionID),
-					},
-				},
-				&dns.TXT{
-					Hdr: dns.RR_Header{Name: q.Name, Rrtype: dns.TypeTXT, Class: dns.ClassINET, Ttl: 1},
-					Txt: []string{
-						fmt.Sprintf("%d", msg.MessageID),
-					},
-				},
-				&dns.TXT{
-					Hdr: dns.RR_Header{Name: q.Name, Rrtype: dns.TypeTXT, Class: dns.ClassINET, Ttl: 2},
-					Txt: []string{
-						fmt.Sprintf("%d", msg.Begin),
-					},
-				})
-		}
-	}
-	//logging.LogInfo("setting reply", "resp", resp)
-}
-func (s *DnsServer) addResponseAction(resp *dns.Msg, msg *dnsgrpc.DnsPacket, req *dns.Msg, domain string, action dnsgrpc.Actions) {
-
-	for _, q := range req.Question {
-		switch q.Qtype {
-		case dns.TypeA:
-			resp.Authoritative = true
-			actionRespBuf := make([]byte, net.IPv4len)
-			binary.LittleEndian.PutUint32(actionRespBuf, uint32(action))
-			// resp.RecursionAvailable = complete
-			resp.Answer = append(resp.Answer,
-				&dns.A{
-					Hdr: dns.RR_Header{Name: q.Name, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 3},
 					A:   actionRespBuf,
 				},
 			)
 		case dns.TypeAAAA:
-			resp.Authoritative = true
 			actionRespBuf := make([]byte, net.IPv6len)
-			binary.LittleEndian.PutUint32(actionRespBuf, uint32(action))
-			// resp.RecursionAvailable = complete
+			actionRespBuf[net.IPv6len-1] = byte(action)
 			resp.Answer = append(resp.Answer,
 				&dns.AAAA{
-					Hdr:  dns.RR_Header{Name: q.Name, Rrtype: dns.TypeAAAA, Class: dns.ClassINET, Ttl: 3},
+					Hdr:  dns.RR_Header{Name: q.Name, Rrtype: dns.TypeAAAA, Class: dns.ClassINET, Ttl: 0},
 					AAAA: actionRespBuf,
 				},
 			)
 		case dns.TypeTXT:
-			resp.Authoritative = true
 			resp.Answer = append(resp.Answer,
 				&dns.TXT{
-					Hdr: dns.RR_Header{Name: q.Name, Rrtype: dns.TypeTXT, Class: dns.ClassINET, Ttl: 3},
+					Hdr: dns.RR_Header{Name: q.Name, Rrtype: dns.TypeTXT, Class: dns.ClassINET, Ttl: 0},
 					Txt: []string{
 						fmt.Sprintf("%d", action),
 					},
@@ -411,7 +359,7 @@ func (s *DnsServer) nameErrorResp(req *dns.Msg, errCode int) *dns.Msg {
 }
 func (s *DnsServer) parseData(subdomain string) (*dnsgrpc.DnsPacket, error) {
 	subdata := strings.Join(strings.Split(subdomain, "."), "")
-	//logging.LogInfo("parsing data", "raw data", subdata)
+	//logging.LogInfo("parseData", "raw data", subdata)
 	data, err := base32.StdEncoding.WithPadding(base32.NoPadding).DecodeString(strings.ToUpper(subdata))
 	if err != nil {
 		logging.LogError(err, "failed to decode subdata")
@@ -423,7 +371,7 @@ func (s *DnsServer) parseData(subdomain string) (*dnsgrpc.DnsPacket, error) {
 		logging.LogError(err, "failed to unmarshal data", "data", data)
 		return nil, err
 	}
-	//logging.LogInfo("got msg", "msg", msg)
+	//logging.LogInfo("parseData", "msg", msg)
 	return msg, nil
 }
 func (s *DnsServer) TrackNewConnection(msg *dnsgrpc.DnsPacket) *DnsConnection {
@@ -466,20 +414,22 @@ func (con *DnsConnection) AddIncomingMessage(msg *dnsgrpc.DnsPacket) dnsgrpc.Act
 	con.incomingMessages[msg.MessageID].TotalReceived += uint32(len(msg.Data))
 	con.incomingMessages[msg.MessageID].Messages[msg.Begin] = msg
 	if con.incomingMessages[msg.MessageID].TotalReceived == msg.Size {
-		totalBuffer := ""
+		totalBuffer := make([]byte, msg.Size)
 		// sort all the start bytes to be in order
 		sort.Slice(con.incomingMessages[msg.MessageID].StartBytes, func(i, j int) bool { return i < j })
 		// iterate over the start bytes and add the corresponding string data together
 		for i := 0; i < len(con.incomingMessages[msg.MessageID].StartBytes); i++ {
-			totalBuffer += con.incomingMessages[msg.MessageID].Messages[con.incomingMessages[msg.MessageID].StartBytes[i]].Data
+			copy(totalBuffer[con.incomingMessages[msg.MessageID].Messages[con.incomingMessages[msg.MessageID].StartBytes[i]].Begin:], con.incomingMessages[msg.MessageID].Messages[con.incomingMessages[msg.MessageID].StartBytes[i]].Data)
+			//totalBuffer += con.incomingMessages[msg.MessageID].Messages[con.incomingMessages[msg.MessageID].StartBytes[i]].Data
 		}
 		// remove the tracking of this msg.MessageID because we got the whole message
 		delete(con.incomingMessages, msg.MessageID)
+		go con.UpdateMythicIDTracking(msg.AgentSessionID, totalBuffer)
+		finalBuffer := base64.StdEncoding.EncodeToString(totalBuffer)
 		// send this totalBuffer off to Mythic for processing
 		logging.LogInfo("sending full message to mythic", "message id", msg.MessageID, "agent session id", msg.AgentSessionID)
-		go con.UpdateMythicIDTracking(msg.AgentSessionID, []byte(totalBuffer))
 		requestURL := fmt.Sprintf("http://%s:%d/agent_message", mythicConfig.MythicConfig.MythicServerHost, mythicConfig.MythicConfig.MythicServerPort)
-		req, err := http.NewRequest("POST", requestURL, bytes.NewBuffer([]byte(totalBuffer)))
+		req, err := http.NewRequest("POST", requestURL, bytes.NewBuffer([]byte(finalBuffer)))
 		if err != nil {
 			logging.LogError(err, "failed to create request")
 		}
@@ -487,7 +437,9 @@ func (con *DnsConnection) AddIncomingMessage(msg *dnsgrpc.DnsPacket) dnsgrpc.Act
 		resp, err := client.Do(req)
 		if err != nil {
 			logging.LogError(err, "failed to send request")
-			resp.Body.Close()
+			if resp != nil && resp.Body != nil {
+				resp.Body.Close()
+			}
 			return dnsgrpc.Actions_ReTransmit
 		}
 		body, err := io.ReadAll(resp.Body)
@@ -498,32 +450,112 @@ func (con *DnsConnection) AddIncomingMessage(msg *dnsgrpc.DnsPacket) dnsgrpc.Act
 		}
 		// add the response to the outgoing buffers for the agent to pick up next
 		//logging.LogInfo("received response from server", "body", body)
-		con.outgoingBuffers[msg.MessageID] = body
+		finalResponse, err := base64.StdEncoding.DecodeString(string(body))
+		if err != nil {
+			logging.LogError(err, "failed to decode response", "response", string(body))
+			return dnsgrpc.Actions_ReTransmit
+		}
+		con.outgoingBuffers[msg.MessageID] = finalResponse
 		con.outgoingMsgIDs = append(con.outgoingMsgIDs, msg.MessageID)
 		return dnsgrpc.Actions_ServerToAgent
 	}
 	return msg.Action
 }
 func (con *DnsConnection) UpdateMythicIDTracking(AgentSessionID uint32, MythicMessage []byte) {
-	AgentIDToMythicIDLock.Lock()
-	defer AgentIDToMythicIDLock.Unlock()
-	if _, ok := AgentIDToMythicIDMap[AgentSessionID]; ok {
-		return
-	}
-	decodedBytes, err := base64.StdEncoding.DecodeString(string(MythicMessage))
-	if err != nil {
-		logging.LogError(err, "failed to decode Mythic message")
-		return
-	}
-	if len(decodedBytes) > 40 {
-		callbackUUID, err := uuid.Parse(string(decodedBytes[:36]))
+	callbackUUID := ""
+	if len(MythicMessage) > 40 {
+		callbackUUIDParsed, err := uuid.Parse(string(MythicMessage[:36]))
 		if err != nil {
 			logging.LogError(err, "failed to parse callback UUID")
 			return
 		}
-		AgentIDToMythicIDMap[AgentSessionID] = callbackUUID.String()
+		callbackUUID = callbackUUIDParsed.String()
+	} else {
+		return
 	}
-}
-func (con *DnsConnection) UpdateMythicInbound(MessageID uint32) {
+	AgentIDToMythicIDLock.RLock()
+	agentData, ok := AgentIDToMythicIDMap[AgentSessionID]
+	AgentIDToMythicIDLock.RUnlock()
+	if ok {
+		// we've seen this AgentSessionID before, but see if it's different and update if necessary
+		if agentData.AgentCallbackID != callbackUUID && callbackUUID != "" {
+			agentData.AgentCallbackID = callbackUUID
+			AgentIDToMythicIDLock.Lock()
+			AgentIDToMythicIDMap[AgentSessionID] = agentData
+			AgentIDToMythicIDLock.Unlock()
+			return
+		}
+		return
+	}
 
+	agentData = AgentMessageMythicUITracking{
+		AgentCallbackID: callbackUUID,
+		ExtraInfo:       "",
+		LastUpdateTime:  time.Now(),
+		PerformedUpdate: false,
+	}
+	AgentIDToMythicIDLock.Lock()
+	AgentIDToMythicIDMap[AgentSessionID] = agentData
+	AgentIDToMythicIDLock.Unlock()
+
+}
+func (con *DnsConnection) UpdateTransferStatus(AgentSessionID uint32, Action dnsgrpc.Actions, currentChunk uint32, size uint32) {
+	AgentIDToMythicIDLock.RLock()
+	agentStatus, ok := AgentIDToMythicIDMap[AgentSessionID]
+	AgentIDToMythicIDLock.RUnlock()
+	if !ok {
+		return
+	}
+	if agentStatus.LastUpdateTime.Add(time.Duration(5) * time.Second).After(time.Now()) {
+		return
+	}
+	newMessage := ""
+	updateLastCheckinTime := true
+	updateLastCheckinTimeC2 := "dns"
+	if currentChunk == 0 {
+		if agentStatus.ExtraInfo != "" || !agentStatus.PerformedUpdate {
+			resp, err := mythicrpc.SendMythicRPCCallbackUpdate(mythicrpc.MythicRPCCallbackUpdateMessage{
+				AgentCallbackID:                   &agentStatus.AgentCallbackID,
+				ExtraInfo:                         &newMessage,
+				UpdateLastCheckinTime:             &updateLastCheckinTime,
+				UpdateLastCheckinTimeViaC2Profile: &updateLastCheckinTimeC2,
+			})
+			if err != nil {
+				logging.LogError(err, "failed to send callback update")
+			} else if !resp.Success {
+				logging.LogError(nil, "failed to send callback update", "response", resp.Error, "agent session id", AgentSessionID, "agent callback id", agentStatus.AgentCallbackID)
+			}
+		}
+		AgentIDToMythicIDLock.Lock()
+		agentStatus.ExtraInfo = newMessage
+		agentStatus.LastUpdateTime = time.Now()
+		agentStatus.PerformedUpdate = true
+		AgentIDToMythicIDMap[AgentSessionID] = agentStatus
+		AgentIDToMythicIDLock.Unlock()
+		return
+	}
+	if Action == dnsgrpc.Actions_ServerToAgent {
+		newMessage = fmt.Sprintf("Mythic->Agent: Sending")
+	} else if Action == dnsgrpc.Actions_AgentToServer {
+		newMessage = fmt.Sprintf("Agent->Mythic: Sending")
+	}
+	percentage := (float32(currentChunk) / float32(size)) * 100
+	newMessage += fmt.Sprintf(" %d/%d (%.2f%%) Bytes...", currentChunk, size, percentage)
+	resp, err := mythicrpc.SendMythicRPCCallbackUpdate(mythicrpc.MythicRPCCallbackUpdateMessage{
+		AgentCallbackID:                   &agentStatus.AgentCallbackID,
+		ExtraInfo:                         &newMessage,
+		UpdateLastCheckinTime:             &updateLastCheckinTime,
+		UpdateLastCheckinTimeViaC2Profile: &updateLastCheckinTimeC2,
+	})
+	if err != nil {
+		logging.LogError(err, "failed to send callback update")
+	} else if !resp.Success {
+		logging.LogError(nil, "failed to send callback update", "response", resp.Error, "agent session id", AgentSessionID, "agent callback id", agentStatus.AgentCallbackID)
+	}
+	AgentIDToMythicIDLock.Lock()
+	agentStatus.ExtraInfo = newMessage
+	agentStatus.LastUpdateTime = time.Now()
+	agentStatus.PerformedUpdate = true
+	AgentIDToMythicIDMap[AgentSessionID] = agentStatus
+	AgentIDToMythicIDLock.Unlock()
 }

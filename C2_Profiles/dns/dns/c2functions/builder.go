@@ -42,13 +42,14 @@ func writeC2JsonConfig(cfg *config) error {
 	return os.WriteFile(filepath.Join(".", "dns", "c2_code", "config.json"), jsonBytes, 644)
 }
 
-var version = "0.0.5"
+var version = "0.0.6"
 var dnsc2definition = c2structs.C2Profile{
 	Name:             "dns",
 	Author:           "@its_a_feature_",
-	Description:      fmt.Sprintf("Uses DNS A, AAAA, and TXT queries for connectivity\nCURRENTLY IN BETA! USE WITH CAUTION!\nVersion: %s", version),
+	Description:      fmt.Sprintf("Uses DNS A, AAAA, and TXT queries for connectivity\nCURRENTLY IN BETA! USE WITH CAUTION!"),
 	IsP2p:            false,
 	IsServerRouted:   true,
+	SemVer:           version,
 	ServerBinaryPath: filepath.Join(".", "dns", "c2_code", "mythic_dns_server"),
 	ConfigCheckFunction: func(message c2structs.C2ConfigCheckMessage) c2structs.C2ConfigCheckMessageResponse {
 		response := c2structs.C2ConfigCheckMessageResponse{
