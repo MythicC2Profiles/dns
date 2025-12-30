@@ -26,6 +26,7 @@ import (
 
 type DnsServer struct {
 	server          *dns.Server
+	tcpServer       *dns.Server
 	connections     *sync.Map
 	connectionMutex *sync.RWMutex
 	domains         []string
@@ -64,7 +65,16 @@ var AgentIDToMythicIDLock sync.RWMutex
 
 func Initialize(configInstance instanceConfig) *DnsServer {
 	server := &DnsServer{
-		server:          &dns.Server{Addr: fmt.Sprintf("%s:%d", configInstance.BindIP, configInstance.Port), Net: "udp"},
+		server: &dns.Server{
+			Addr:    fmt.Sprintf("%s:%d", configInstance.BindIP, configInstance.Port),
+			Net:     "udp",
+			UDPSize: 4096,
+		},
+		tcpServer: &dns.Server{
+			Addr:    fmt.Sprintf("%s:%d", configInstance.BindIP, configInstance.Port),
+			Net:     "tcp",
+			UDPSize: 4096,
+		},
 		connections:     &sync.Map{},
 		connectionMutex: &sync.RWMutex{},
 		TTL:             0,
@@ -74,14 +84,45 @@ func Initialize(configInstance instanceConfig) *DnsServer {
 	// add our own handlefunc per dns instance we make
 	instanceHandler := dns.NewServeMux()
 	instanceHandler.HandleFunc(".", func(writer dns.ResponseWriter, req *dns.Msg) {
+		//logging.LogInfo("got a UDP request", "request", req)
 		server.HandleDNSRequest(writer, req)
 	})
 	server.server.Handler = instanceHandler
+
+	instanceTCPHandler := dns.NewServeMux()
+	instanceTCPHandler.HandleFunc(".", func(writer dns.ResponseWriter, req *dns.Msg) {
+		logging.LogInfo("got a TCP request", "request", req)
+		server.HandleDNSRequest(writer, req)
+	})
+	server.tcpServer.Handler = instanceTCPHandler
 	return server
 }
 
 func (s *DnsServer) ListenAndServe() error {
-	return s.server.ListenAndServe()
+	var err error
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+	go func() {
+		logging.LogInfo("starting UDP server")
+		udpErr := s.server.ListenAndServe()
+		if udpErr != nil {
+			err = udpErr
+			logging.LogError(udpErr, "Failed to start UDP server")
+		}
+		wg.Done()
+	}()
+	wg.Add(1)
+	go func() {
+		logging.LogInfo("starting TCP server")
+		tcpErr := s.tcpServer.ListenAndServe()
+		if tcpErr != nil {
+			err = tcpErr
+			logging.LogError(tcpErr, "Failed to start TCP server")
+		}
+		wg.Done()
+	}()
+	wg.Wait()
+	return err
 }
 func (s *DnsServer) getParentDomain(reqDomain string) string {
 	longestParent := ""
@@ -144,7 +185,7 @@ func (s *DnsServer) handleMessage(domain string, req *dns.Msg) *dns.Msg {
 		// agent asking server to retransmit a message
 		//return s.ReTransmit(domain, msg, req)
 	}
-	return nil
+	return s.nameErrorResp(req, dns.RcodeNameError)
 }
 func (s *DnsServer) GetConnection(msg *dnsgrpc.DnsPacket) *DnsConnection {
 	var dnsConnection *DnsConnection
@@ -164,16 +205,28 @@ func (s *DnsServer) AgentToServer(domain string, msg *dnsgrpc.DnsPacket, req *dn
 	dnsConnection := s.GetConnection(msg)
 	respAction := dnsConnection.AddIncomingMessage(msg)
 	resp := new(dns.Msg)
+	resp = resp.SetReply(req)
 	resp.Authoritative = true
 	s.addResponseAction(resp, msg, req, domain, respAction)
 	dnsConnection.UpdateTransferStatus(msg.AgentSessionID, msg.Action, msg.Begin, msg.Size)
 	return resp
 }
+func (s *DnsServer) getMessageLengthPerChunk(req *dns.Msg) uint32 {
+	if req.Question[0].Qtype == dns.TypeA {
+		return 128 // in TypeA, need 1B for order, 3B for data per Answer. 1 Answer for Action
+	} else if req.Question[0].Qtype == dns.TypeAAAA {
+		return 630 // in TypeAAAA, need 1B for order, 15 for data per Answer. 1 Answer for Action
+	} else if req.Question[0].Qtype == dns.TypeTXT {
+		return 1000 // arbitrary 1k instead of 128 Bytes per response
+	}
+	return 100
+}
 func (s *DnsServer) ServerToAgent(domain string, msg *dnsgrpc.DnsPacket, req *dns.Msg) *dns.Msg {
 	//logging.LogInfo("got message from CheckForMessage", "msg", msg)
 	dnsConnection := s.GetConnection(msg)
 	resp := new(dns.Msg)
-
+	resp = resp.SetReply(req)
+	resp.Authoritative = true
 	dnsConnection.outgoingMutex.Lock()
 	defer dnsConnection.outgoingMutex.Unlock()
 	if _, ok := dnsConnection.outgoingBuffers[msg.MessageID]; !ok {
@@ -184,14 +237,7 @@ func (s *DnsServer) ServerToAgent(domain string, msg *dnsgrpc.DnsPacket, req *dn
 	s.addResponseAction(resp, msg, req, domain, dnsgrpc.Actions_ServerToAgent)
 	finishedMessage := false
 	size := uint32(len(dnsConnection.outgoingBuffers[msg.MessageID]))
-	end := msg.Begin
-	if req.Question[0].Qtype == dns.TypeA {
-		end += 128 // in TypeA, need 1B for order, 3B for data per Answer. 1 Answer for Action
-	} else if req.Question[0].Qtype == dns.TypeAAAA {
-		end += 630 // in TypeAAAA, need 1B for order, 15 for data per Answer. 1 Answer for Action
-	} else if req.Question[0].Qtype == dns.TypeTXT {
-		end += 1000 // arbitrary 1k instead of 128 Bytes per response
-	}
+	end := msg.Begin + s.getMessageLengthPerChunk(req)
 	if end >= size {
 		end = size
 		finishedMessage = true
@@ -317,8 +363,6 @@ func (s *DnsServer) AddPacketToResponse(msg *dnsgrpc.DnsPacket, responsePacket *
 	}
 }
 func (s *DnsServer) addResponseAction(resp *dns.Msg, msg *dnsgrpc.DnsPacket, req *dns.Msg, domain string, action dnsgrpc.Actions) {
-	resp = resp.SetReply(req)
-	resp.Authoritative = true
 	for _, q := range req.Question {
 		switch q.Qtype {
 		case dns.TypeA:
@@ -353,6 +397,7 @@ func (s *DnsServer) addResponseAction(resp *dns.Msg, msg *dnsgrpc.DnsPacket, req
 }
 func (s *DnsServer) nameErrorResp(req *dns.Msg, errCode int) *dns.Msg {
 	resp := new(dns.Msg)
+	resp = resp.SetReply(req)
 	resp.SetRcode(req, errCode)
 	resp.Authoritative = true
 	return resp
@@ -420,7 +465,6 @@ func (con *DnsConnection) AddIncomingMessage(msg *dnsgrpc.DnsPacket) dnsgrpc.Act
 		// iterate over the start bytes and add the corresponding string data together
 		for i := 0; i < len(con.incomingMessages[msg.MessageID].StartBytes); i++ {
 			copy(totalBuffer[con.incomingMessages[msg.MessageID].Messages[con.incomingMessages[msg.MessageID].StartBytes[i]].Begin:], con.incomingMessages[msg.MessageID].Messages[con.incomingMessages[msg.MessageID].StartBytes[i]].Data)
-			//totalBuffer += con.incomingMessages[msg.MessageID].Messages[con.incomingMessages[msg.MessageID].StartBytes[i]].Data
 		}
 		// remove the tracking of this msg.MessageID because we got the whole message
 		delete(con.incomingMessages, msg.MessageID)
@@ -523,7 +567,9 @@ func (con *DnsConnection) UpdateTransferStatus(AgentSessionID uint32, Action dns
 			if err != nil {
 				logging.LogError(err, "failed to send callback update")
 			} else if !resp.Success {
-				logging.LogError(nil, "failed to send callback update", "response", resp.Error, "agent session id", AgentSessionID, "agent callback id", agentStatus.AgentCallbackID)
+				if resp.Error != "sql: no rows in result set" {
+					logging.LogError(nil, "failed to send callback update", "response", resp.Error, "agent session id", AgentSessionID, "agent callback id", agentStatus.AgentCallbackID)
+				}
 			}
 		}
 		AgentIDToMythicIDLock.Lock()

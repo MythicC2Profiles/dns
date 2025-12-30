@@ -42,7 +42,7 @@ func writeC2JsonConfig(cfg *config) error {
 	return os.WriteFile(filepath.Join(".", "dns", "c2_code", "config.json"), jsonBytes, 644)
 }
 
-var version = "0.0.6"
+var version = "0.0.7"
 var dnsc2definition = c2structs.C2Profile{
 	Name:             "dns",
 	Author:           "@its_a_feature_",
@@ -215,6 +215,12 @@ var dnsc2parameters = []c2structs.C2Parameter{
 		Name:          "max_query_length",
 		Description:   "Maximum DNS Query length (must be <= 255 per DNS)",
 		DefaultValue:  255,
+		ParameterType: c2structs.C2_PARAMETER_TYPE_NUMBER,
+	},
+	{
+		Name:          "max_subdomain_length",
+		Description:   "Maximum DNS SubDomain length (must be <= 64 per DNS)",
+		DefaultValue:  64,
 		ParameterType: c2structs.C2_PARAMETER_TYPE_NUMBER,
 	},
 }

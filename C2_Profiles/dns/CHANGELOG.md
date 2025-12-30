@@ -1,4 +1,12 @@
 
+## [v0.0.7] - 2025-12-30
+
+### Changed
+
+- Added new `max_subdomain_length` parameter
+- Updated to also listen on TCP for truncated requests
+- Updated to support setting a callback's `extra_info` field to highlight transfer status
+
 ## [v0.0.5] - 2025-11-07
 
 ### Changed
