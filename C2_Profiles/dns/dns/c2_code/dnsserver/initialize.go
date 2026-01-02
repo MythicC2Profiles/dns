@@ -11,7 +11,6 @@ import (
 	"net"
 	"net/http"
 	"slices"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -37,10 +36,9 @@ type DnsServer struct {
 
 // DnsMessageStream tracks the progress of a message in chunk transfer
 type DnsMessageStream struct {
-	Size          uint32
-	TotalReceived uint32
-	Messages      map[uint32]*dnsgrpc.DnsPacket
-	StartBytes    []uint32
+	TotalChunks    uint32
+	ChunksReceived map[uint32]bool
+	Messages       map[uint32]*dnsgrpc.DnsPacket
 }
 
 // DnsConnection tracks all the messages in/out for a callback/payload
@@ -208,7 +206,7 @@ func (s *DnsServer) AgentToServer(domain string, msg *dnsgrpc.DnsPacket, req *dn
 	resp = resp.SetReply(req)
 	resp.Authoritative = true
 	s.addResponseAction(resp, msg, req, domain, respAction)
-	dnsConnection.UpdateTransferStatus(msg.AgentSessionID, msg.Action, msg.Begin, msg.Size)
+	dnsConnection.UpdateTransferStatus(msg.AgentSessionID, msg.Action, msg.CurrentChunk, msg.TotalChunks)
 	return resp
 }
 func (s *DnsServer) getMessageLengthPerChunk(req *dns.Msg) uint32 {
@@ -237,23 +235,28 @@ func (s *DnsServer) ServerToAgent(domain string, msg *dnsgrpc.DnsPacket, req *dn
 	s.addResponseAction(resp, msg, req, domain, dnsgrpc.Actions_ServerToAgent)
 	finishedMessage := false
 	size := uint32(len(dnsConnection.outgoingBuffers[msg.MessageID]))
-	end := msg.Begin + s.getMessageLengthPerChunk(req)
+	messageLengthPerChunk := s.getMessageLengthPerChunk(req)
+	totalChunks := size / messageLengthPerChunk
+	if totalChunks*messageLengthPerChunk < size {
+		totalChunks += 1 // might need to add 1 if there's a portion left over
+	}
+	end := (msg.CurrentChunk * messageLengthPerChunk) + messageLengthPerChunk
 	if end >= size {
 		end = size
 		finishedMessage = true
 	}
-	chunk := make([]byte, end-msg.Begin)
-	copy(chunk, dnsConnection.outgoingBuffers[msg.MessageID][msg.Begin:end])
+	chunk := make([]byte, end-(msg.CurrentChunk*messageLengthPerChunk))
+	copy(chunk, dnsConnection.outgoingBuffers[msg.MessageID][msg.CurrentChunk*messageLengthPerChunk:end])
 	responsePacket := &dnsgrpc.DnsPacket{
 		Action:         dnsgrpc.Actions_ServerToAgent,
 		AgentSessionID: msg.AgentSessionID,
 		MessageID:      msg.MessageID,
-		Size:           size,
-		Begin:          msg.Begin,
+		TotalChunks:    totalChunks,
+		CurrentChunk:   msg.CurrentChunk,
 		Data:           chunk,
 	}
 	s.AddPacketToResponse(msg, responsePacket, resp, req, domain)
-	dnsConnection.UpdateTransferStatus(responsePacket.AgentSessionID, responsePacket.Action, responsePacket.Begin, responsePacket.Size)
+	dnsConnection.UpdateTransferStatus(responsePacket.AgentSessionID, responsePacket.Action, responsePacket.CurrentChunk, responsePacket.TotalChunks)
 	if finishedMessage {
 		if slices.Contains(dnsConnection.outgoingMsgIDsToClear, msg.MessageID) {
 			logging.LogInfo("finished sending message again", "message id", msg.MessageID, "chunk", chunk)
@@ -446,26 +449,32 @@ func (con *DnsConnection) AddIncomingMessage(msg *dnsgrpc.DnsPacket) dnsgrpc.Act
 	defer con.incomingMutex.Unlock()
 	if con.incomingMessages[msg.MessageID] == nil {
 		con.incomingMessages[msg.MessageID] = &DnsMessageStream{
-			TotalReceived: 0,
-			Messages:      make(map[uint32]*dnsgrpc.DnsPacket),
-			Size:          msg.Size,
-			StartBytes:    []uint32{},
+			ChunksReceived: make(map[uint32]bool),
+			Messages:       make(map[uint32]*dnsgrpc.DnsPacket),
+			TotalChunks:    msg.TotalChunks,
 		}
 	}
-	if slices.Contains(con.incomingMessages[msg.MessageID].StartBytes, msg.Begin) {
+	if _, ok := con.incomingMessages[msg.MessageID].ChunksReceived[msg.CurrentChunk]; ok {
 		return msg.Action // this is a duplicate, we've seen this one before
 	}
-	con.incomingMessages[msg.MessageID].StartBytes = append(con.incomingMessages[msg.MessageID].StartBytes, msg.Begin)
-	con.incomingMessages[msg.MessageID].TotalReceived += uint32(len(msg.Data))
-	con.incomingMessages[msg.MessageID].Messages[msg.Begin] = msg
-	if con.incomingMessages[msg.MessageID].TotalReceived == msg.Size {
-		totalBuffer := make([]byte, msg.Size)
+	con.incomingMessages[msg.MessageID].ChunksReceived[msg.CurrentChunk] = true
+	con.incomingMessages[msg.MessageID].Messages[msg.CurrentChunk] = msg
+	//fmt.Printf("got message: %v\n", msg.Data)
+	//con.incomingMessages[msg.MessageID].StartBytes = append(con.incomingMessages[msg.MessageID].StartBytes, msg.Begin)
+	//con.incomingMessages[msg.MessageID].TotalReceived += uint32(len(msg.Data))
+	//con.incomingMessages[msg.MessageID].Messages[msg.Begin] = msg
+	if uint32(len(con.incomingMessages[msg.MessageID].ChunksReceived)) == msg.TotalChunks {
+		totalBuffer := make([]byte, 0)
 		// sort all the start bytes to be in order
-		sort.Slice(con.incomingMessages[msg.MessageID].StartBytes, func(i, j int) bool { return i < j })
+		//sort.Slice(con.incomingMessages[msg.MessageID].StartBytes, func(i, j int) bool { return i < j })
 		// iterate over the start bytes and add the corresponding string data together
-		for i := 0; i < len(con.incomingMessages[msg.MessageID].StartBytes); i++ {
-			copy(totalBuffer[con.incomingMessages[msg.MessageID].Messages[con.incomingMessages[msg.MessageID].StartBytes[i]].Begin:], con.incomingMessages[msg.MessageID].Messages[con.incomingMessages[msg.MessageID].StartBytes[i]].Data)
+		for i := uint32(0); i < msg.TotalChunks; i++ {
+			totalBuffer = append(totalBuffer, con.incomingMessages[msg.MessageID].Messages[i].Data...)
 		}
+
+		//for i := 0; i < len(con.incomingMessages[msg.MessageID].StartBytes); i++ {
+		//	copy(totalBuffer[con.incomingMessages[msg.MessageID].Messages[con.incomingMessages[msg.MessageID].StartBytes[i]].Begin:], con.incomingMessages[msg.MessageID].Messages[con.incomingMessages[msg.MessageID].StartBytes[i]].Data)
+		//}
 		// remove the tracking of this msg.MessageID because we got the whole message
 		delete(con.incomingMessages, msg.MessageID)
 		go con.UpdateMythicIDTracking(msg.AgentSessionID, totalBuffer)
@@ -586,7 +595,7 @@ func (con *DnsConnection) UpdateTransferStatus(AgentSessionID uint32, Action dns
 		newMessage = fmt.Sprintf("Agent->Mythic: Sending")
 	}
 	percentage := (float32(currentChunk) / float32(size)) * 100
-	newMessage += fmt.Sprintf(" %d/%d (%.2f%%) Bytes...", currentChunk, size, percentage)
+	newMessage += fmt.Sprintf(" %d/%d (%.2f%%) Chunks...", currentChunk, size, percentage)
 	resp, err := mythicrpc.SendMythicRPCCallbackUpdate(mythicrpc.MythicRPCCallbackUpdateMessage{
 		AgentCallbackID:                   &agentStatus.AgentCallbackID,
 		ExtraInfo:                         &newMessage,
