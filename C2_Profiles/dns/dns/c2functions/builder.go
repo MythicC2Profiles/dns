@@ -1,6 +1,7 @@
 package c2functions
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -51,7 +52,8 @@ var dnsc2definition = c2structs.C2Profile{
 	IsServerRouted:   true,
 	SemVer:           version,
 	ServerBinaryPath: filepath.Join(".", "dns", "c2_code", "mythic_dns_server"),
-	ConfigCheckFunction: func(message c2structs.C2ConfigCheckMessage) c2structs.C2ConfigCheckMessageResponse {
+	ServerFolderPath: filepath.Join(".", "dns", "c2_code"),
+	ConfigCheckFunction: func(ctx context.Context, message c2structs.C2ConfigCheckMessage) c2structs.C2ConfigCheckMessageResponse {
 		response := c2structs.C2ConfigCheckMessageResponse{
 			Success: true,
 			Message: fmt.Sprintf("Called config check\n%v", message),
@@ -88,21 +90,21 @@ var dnsc2definition = c2structs.C2Profile{
 		response.RestartInternalServer = true
 		return response
 	},
-	GetRedirectorRulesFunction: func(message c2structs.C2GetRedirectorRuleMessage) c2structs.C2GetRedirectorRuleMessageResponse {
+	GetRedirectorRulesFunction: func(ctx context.Context, message c2structs.C2GetRedirectorRuleMessage) c2structs.C2GetRedirectorRuleMessageResponse {
 		response := c2structs.C2GetRedirectorRuleMessageResponse{
 			Success: false,
 			Message: "Function not supported yet",
 		}
 		return response
 	},
-	OPSECCheckFunction: func(message c2structs.C2OPSECMessage) c2structs.C2OPSECMessageResponse {
+	OPSECCheckFunction: func(ctx context.Context, message c2structs.C2OPSECMessage) c2structs.C2OPSECMessageResponse {
 		response := c2structs.C2OPSECMessageResponse{
 			Success: true,
 			Message: fmt.Sprintf("Called opsec check:\n%v", message),
 		}
 		return response
 	},
-	GetIOCFunction: func(message c2structs.C2GetIOCMessage) c2structs.C2GetIOCMessageResponse {
+	GetIOCFunction: func(ctx context.Context, message c2structs.C2GetIOCMessage) c2structs.C2GetIOCMessageResponse {
 		response := c2structs.C2GetIOCMessageResponse{Success: true}
 		domains, err := message.GetArrayArg("domains")
 		if err != nil {
@@ -117,16 +119,15 @@ var dnsc2definition = c2structs.C2Profile{
 		}
 		return response
 	},
-	SampleMessageFunction: func(message c2structs.C2SampleMessageMessage) c2structs.C2SampleMessageResponse {
+	SampleMessageFunction: func(ctx context.Context, message c2structs.C2SampleMessageMessage) c2structs.C2SampleMessageResponse {
 		response := c2structs.C2SampleMessageResponse{Success: true, Message: "Function not supported yet"}
 
 		return response
 	},
-	HostFileFunction: func(message c2structs.C2HostFileMessage) c2structs.C2HostFileMessageResponse {
-		return c2structs.C2HostFileMessageResponse{
-			Success:               false,
-			RestartInternalServer: false,
-			Error:                 "Function not supported yet",
+	HostFileFunction: func(ctx context.Context, message c2structs.C2HostFilesMessage) c2structs.C2HostFilesMessageResponse {
+		return c2structs.C2HostFilesMessageResponse{
+			Success: false,
+			Error:   "Function not supported yet",
 		}
 	},
 }

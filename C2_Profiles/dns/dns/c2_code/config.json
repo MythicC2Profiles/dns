@@ -5,6 +5,7 @@
       "debug": false,
       "bind_ip": "0.0.0.0",
       "domains": [
+        "1.example.com"
       ]
     }
   ]
